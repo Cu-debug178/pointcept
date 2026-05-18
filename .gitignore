@@ -4,6 +4,15 @@ docs/*
 !docs/DA_RADIUS_STAGE_REPORT.md
 !docs/DA_RADIUS_FINAL_REPORT.md
 docs/papers/
+.claude/
+Pointcept_backup/
+Pointcept/__pointcept_casefix_tmp*/
+Pointcept/__casefix_failed_git_backup_ignore/
+Pointcept/.ipynb_checkpoints/
+Pointcept/configs/**/.ipynb_checkpoints/
+Pointcept/pointcept/**/.ipynb_checkpoints/
+Pointcept/scripts/.ipynb_checkpoints/
+Pointcept/tools/.ipynb_checkpoints/
 
 # Large files
 *.run

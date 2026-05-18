@@ -11,9 +11,12 @@
 #
 
 
+import sys
+from pathlib import Path
+from typing import Tuple, List
+
 import torch
 from torch import Tensor
-from typing import Tuple, List
 from easydict import EasyDict
 
 
@@ -26,6 +29,11 @@ from pointcept.models.kpconvx.cpp_wrappers.cpp_neighbors import cpp_neighbors
 from pointcept.models.utils import offset2batch, batch2offset
 from torch_geometric.nn.pool import voxel_grid
 from torch_scatter import segment_csr
+
+LIBS_ROOT = Path(__file__).resolve().parents[4] / "libs"
+if (LIBS_ROOT / "pointops").exists() and str(LIBS_ROOT) not in sys.path:
+    sys.path.insert(0, str(LIBS_ROOT))
+
 import pointops
 
 

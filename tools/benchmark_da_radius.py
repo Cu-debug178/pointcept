@@ -1,7 +1,14 @@
 import argparse
+import sys
 import time
+from pathlib import Path
 
 import torch
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LIBS_ROOT = REPO_ROOT / "libs"
+if (LIBS_ROOT / "pointops").exists() and str(LIBS_ROOT) not in sys.path:
+    sys.path.insert(0, str(LIBS_ROOT))
 
 
 def make_points(num_points, batches, device):

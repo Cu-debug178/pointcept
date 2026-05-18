@@ -1,3 +1,10 @@
+#personal
+CODEX_TASK.md
+docs/*
+!docs/DA_RADIUS_STAGE_REPORT.md
+!docs/DA_RADIUS_FINAL_REPORT.md
+docs/papers/
+
 # Large files
 *.run
 *.tar.gz
@@ -45,9 +52,11 @@ Thumbs.db
 # CUDA
 *.cu
 *.cuh
+!libs/pointops/src/**/*.cu
 
 # Build artifacts
 build/
+*.pyd
 *.so
 *.o
 *.egg-info/

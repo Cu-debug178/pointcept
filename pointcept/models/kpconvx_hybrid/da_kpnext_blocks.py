@@ -369,6 +369,7 @@ class DAKPConvX(nn.Module):
         s_pts: Tensor,
         neighb_inds: Tensor,
         da_scale: Tensor = None,
+        da_radius_scale: Tensor = None,
     ) -> Tensor:
         """
         Influence function of density-adaptive kernel points on neighbors.
@@ -377,12 +378,13 @@ class DAKPConvX(nn.Module):
             q_pts: query points, shape [M, 3]
             s_pts: support points, shape [N, 3]
             neighb_inds: neighbor indices, shape [M, H]
-            da_scale: adaptive scale for each query point, shape [M] or [M, 1]
+            da_scale: adaptive kernel scale for each query point, shape [M] or [M, 1]
+            da_radius_scale: adaptive radius scale for each query point, shape [M] or [M, 1]
         """
 
         # When da_scale is provided, influence depends on each query point.
         # Therefore cached influence weights cannot be reused.
-        if da_scale is None and self.share_kp and not self.first_kp:
+        if da_scale is None and da_radius_scale is None and self.share_kp and not self.first_kp:
             influence_weights = self.shared_kp_data["infl_w"]
             neighbors = self.shared_kp_data["neighb_p"]
             neighbors_1nn = self.shared_kp_data["neighb_1nn"]
@@ -427,9 +429,27 @@ class DAKPConvX(nn.Module):
                         )
                     )
 
+            if da_radius_scale is not None:
+                da_radius_scale = da_radius_scale.to(
+                    device=neighbors.device,
+                    dtype=neighbors.dtype,
+                ).view(-1, 1)
+
+                if da_radius_scale.shape[0] != neighbors.shape[0]:
+                    raise ValueError(
+                        f"da_radius_scale length {da_radius_scale.shape[0]} does not match query points {neighbors.shape[0]}"
+                    )
+
+                adaptive_radius = self.radius * da_radius_scale
+                radius_mask = torch.norm(neighbors, dim=-1) <= adaptive_radius
+                if self.influence_mode == "constant":
+                    influence_weights = radius_mask.to(dtype=neighbors.dtype)
+                else:
+                    influence_weights = influence_weights * radius_mask.to(dtype=influence_weights.dtype)
+
             # Cache only in original mode.
             # In DA mode, influence weights depend on da_scale and must be recomputed.
-            if da_scale is None and self.share_kp:
+            if da_scale is None and da_radius_scale is None and self.share_kp:
                 self.shared_kp_data["neighb_1nn"] = neighbors_1nn
                 self.shared_kp_data["neighb_p"] = neighbors
                 self.shared_kp_data["infl_w"] = influence_weights
@@ -443,6 +463,7 @@ class DAKPConvX(nn.Module):
         s_feats: Tensor,
         neighb_inds: Tensor,
         da_scale: Tensor = None,
+        da_radius_scale: Tensor = None,
     ) -> Tensor:
         """
         DA-KPConvX forward.
@@ -476,6 +497,7 @@ class DAKPConvX(nn.Module):
             s_pts,
             neighb_inds,
             da_scale=da_scale,
+            da_radius_scale=da_radius_scale,
         )
 
         neighbors_weights = torch.gather(
@@ -484,7 +506,7 @@ class DAKPConvX(nn.Module):
             neighbors_1nn.unsqueeze(2).expand(-1, -1, self.channels),
         )
 
-        if self.influence_mode != "constant":
+        if self.influence_mode != "constant" or da_radius_scale is not None:
             neighbors_weights *= influence_weights.unsqueeze(2)
 
         neighbor_feats = self.merge_op(neighbor_feats, neighbors_weights)
@@ -591,13 +613,20 @@ class KPNextBlock(nn.Module):
                 activation,
             )
 
-    def forward(self, q_pts, s_pts, x, neighbor_indices, da_scale=None):
+    def forward(self, q_pts, s_pts, x, neighbor_indices, da_scale=None, da_radius_scale=None):
         if self.mlp_first:
             if self.in_channels != self.out_channels:
                 x = self.up_mlp(x)
 
             if isinstance(self.conv, DAKPConvX):
-                x = self.conv(q_pts, s_pts, x, neighbor_indices, da_scale=da_scale)
+                x = self.conv(
+                    q_pts,
+                    s_pts,
+                    x,
+                    neighbor_indices,
+                    da_scale=da_scale,
+                    da_radius_scale=da_radius_scale,
+                )
             else:
                 x = self.conv(q_pts, s_pts, x, neighbor_indices)
 
@@ -606,7 +635,14 @@ class KPNextBlock(nn.Module):
 
         else:
             if isinstance(self.conv, DAKPConvX):
-                x = self.conv(q_pts, s_pts, x, neighbor_indices, da_scale=da_scale)
+                x = self.conv(
+                    q_pts,
+                    s_pts,
+                    x,
+                    neighbor_indices,
+                    da_scale=da_scale,
+                    da_radius_scale=da_radius_scale,
+                )
             else:
                 x = self.conv(q_pts, s_pts, x, neighbor_indices)
 
@@ -706,11 +742,18 @@ class KPNextResidualBlock(nn.Module):
         else:
             self.unary_shortcut = nn.Identity()
 
-    def forward(self, q_pts, s_pts, s_feats, neighbor_indices, da_scale=None):
+    def forward(self, q_pts, s_pts, s_feats, neighbor_indices, da_scale=None, da_radius_scale=None):
         x = self.unary1(s_feats)
 
         if isinstance(self.conv, DAKPConvX):
-            x = self.conv(q_pts, s_pts, x, neighbor_indices, da_scale=da_scale)
+            x = self.conv(
+                q_pts,
+                s_pts,
+                x,
+                neighbor_indices,
+                da_scale=da_scale,
+                da_radius_scale=da_radius_scale,
+            )
         else:
             x = self.conv(q_pts, s_pts, x, neighbor_indices)
 
@@ -819,9 +862,16 @@ class KPNextInvertedBlock(nn.Module):
 
         self.drop_path = DropPathPack(drop_path) if drop_path > 0.0 else nn.Identity()
 
-    def forward(self, q_pts, s_pts, s_feats, neighbor_indices, da_scale=None):
+    def forward(self, q_pts, s_pts, s_feats, neighbor_indices, da_scale=None, da_radius_scale=None):
         if isinstance(self.conv, DAKPConvX):
-            x = self.conv(q_pts, s_pts, s_feats, neighbor_indices, da_scale=da_scale)
+            x = self.conv(
+                q_pts,
+                s_pts,
+                s_feats,
+                neighbor_indices,
+                da_scale=da_scale,
+                da_radius_scale=da_radius_scale,
+            )
         else:
             x = self.conv(q_pts, s_pts, s_feats, neighbor_indices)
 
@@ -963,6 +1013,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         q_lengths,
         upcut=None,
         da_scale=None,
+        da_radius_scale=None,
     ):
         downcut = s_feats
 
@@ -973,6 +1024,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 s_feats,
                 neighbor_indices,
                 da_scale=da_scale,
+                da_radius_scale=da_radius_scale,
             )
         else:
             x = self.conv(

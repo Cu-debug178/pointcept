@@ -1,5 +1,7 @@
 import torch
-from pointops import knn_query, ball_query, grouping
+
+from .grouping import grouping
+from .query import ball_query, knn_query
 
 
 def knn_query_and_group(

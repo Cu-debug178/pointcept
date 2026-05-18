@@ -67,15 +67,32 @@ class KPConvXHybrid(KPConvXStage2):
         router_temperature=1.0,
         router_global_boost=1.0,
         enable_global=True,
+        use_global_context=None,
+        global_context_type="serialized_patch",
         global_stages=(4, 5),
+        global_context_stages=None,
         global_patch_sizes=(192, 320),
+        global_patch_size=None,
         global_num_heads=(8, 16),
+        global_context_ratio=1.0,
         global_mlp_ratio=2.0,
         global_dropout=0.0,
+        global_context_drop_path=0.0,
         enable_da=True,
+        use_da_kernel=None,
         da_stages=(2, 3, 4),
         da_scale_range=(0.5, 2.0),
         da_density_k=16,
+        enable_da_radius=False,
+        use_da_radius=None,
+        da_radius_stages=(2, 3, 4),
+        da_radius_scale_range=(0.8, 1.5),
+        da_radius_density_k=16,
+        da_radius_norm="percentile",
+        da_radius_percentile=(10, 90),
+        da_radius_strength=0.75,
+        da_radius_power=1.0,
+        da_radius_backend="torch",
         enable_refine=True,
         refine_hidden_ratio=0.5,
         refine_dropout=0.0,
@@ -105,12 +122,31 @@ class KPConvXHybrid(KPConvXStage2):
         router_global_boost = self.router_cfg.get("global_boost", router_global_boost)
 
         # Global config
+        if use_global_context is not None:
+            enable_global = use_global_context
         enable_global = self.global_cfg.get("enable", enable_global)
+        global_context_type = self.global_cfg.get("type", global_context_type)
+        global_context_type = self.global_cfg.get("context_type", global_context_type)
         global_stages = self.global_cfg.get("stages", global_stages)
+        global_stages = self.global_cfg.get("context_stages", global_stages)
+        if global_context_stages is not None:
+            global_stages = global_context_stages
         global_patch_sizes = self.global_cfg.get("patch_sizes", global_patch_sizes)
+        global_patch_size = self.global_cfg.get("patch_size", global_patch_size)
+        if global_patch_size is not None:
+            if isinstance(global_patch_size, int):
+                global_patch_sizes = tuple(global_patch_size for _ in global_stages)
+            else:
+                global_patch_sizes = tuple(global_patch_size)
         global_num_heads = self.global_cfg.get("num_heads", global_num_heads)
+        global_context_ratio = self.global_cfg.get("context_ratio", global_context_ratio)
+        global_context_ratio = self.global_cfg.get("ratio", global_context_ratio)
         global_mlp_ratio = self.global_cfg.get("mlp_ratio", global_mlp_ratio)
         global_dropout = self.global_cfg.get("dropout", global_dropout)
+        global_context_drop_path = self.global_cfg.get("drop_path", global_context_drop_path)
+        global_context_drop_path = self.global_cfg.get(
+            "context_drop_path", global_context_drop_path
+        )
 
         # Fusion config
         # Currently reserved. Router global_weight is used directly.
@@ -133,15 +169,29 @@ class KPConvXHybrid(KPConvXStage2):
             input_channels=input_channels,
             num_classes=num_classes,
             enable_global=enable_global,
+            global_context_type=global_context_type,
             global_stages=global_stages,
             global_patch_sizes=global_patch_sizes,
             global_num_heads=global_num_heads,
+            global_context_ratio=global_context_ratio,
             global_mlp_ratio=global_mlp_ratio,
             global_dropout=global_dropout,
+            global_context_drop_path=global_context_drop_path,
             enable_da=enable_da,
+            use_da_kernel=use_da_kernel,
             da_stages=da_stages,
             da_scale_range=da_scale_range,
             da_density_k=da_density_k,
+            enable_da_radius=enable_da_radius,
+            use_da_radius=use_da_radius,
+            da_radius_stages=da_radius_stages,
+            da_radius_scale_range=da_radius_scale_range,
+            da_radius_density_k=da_radius_density_k,
+            da_radius_norm=da_radius_norm,
+            da_radius_percentile=da_radius_percentile,
+            da_radius_strength=da_radius_strength,
+            da_radius_power=da_radius_power,
+            da_radius_backend=da_radius_backend,
             init_channels=init_channels,
             channel_scaling=channel_scaling,
             **kwargs,
@@ -239,18 +289,7 @@ class KPConvXHybrid(KPConvXStage2):
         )
         lengths = offset[1:] - offset[:-1]
 
-        in_dict = build_full_pyramid(
-            points,
-            lengths,
-            self.num_layers,
-            self.subsample_size,
-            self.first_radius,
-            self.radius_scaling,
-            self.neighbor_limits,
-            self.upsample_n,
-            sub_mode=self.in_sub_mode,
-            grid_pool_mode=self.grid_pool,
-        )
+        in_dict = self._build_pyramid(points, lengths)
 
         # ------ Stem ------
         feats = self.stem(
@@ -283,6 +322,12 @@ class KPConvXHybrid(KPConvXStage2):
                     neighbors=in_dict.neighbors[l],
                     lengths=in_dict.lengths[l],
                 )
+                da_radius_scale = self._get_da_radius_scale_if_needed(
+                    stage_idx=layer,
+                    points=in_dict.points[l],
+                    neighbors=in_dict.neighbors[l],
+                    lengths=in_dict.lengths[l],
+                )
 
                 upcut = None
                 for block in block_list:
@@ -294,6 +339,7 @@ class KPConvXHybrid(KPConvXStage2):
                         in_dict.lengths[l],
                         upcut=upcut,
                         da_scale=da_scale,
+                        da_radius_scale=da_radius_scale,
                     )
 
             router_state = self._route_stage_if_needed(

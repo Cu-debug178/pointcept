@@ -21,11 +21,35 @@ from pointcept.models.kpconvx.utils.gpu_subsampling import subsample_pack_batch
 from pointcept.models.kpconvx.utils.gpu_neigbors import radius_search_pack_mode, keops_radius_count
 
 from pointcept.models.kpconvx.utils.cpp_funcs import batch_grid_partition
+from pointcept.models.kpconvx.cpp_wrappers.cpp_neighbors import cpp_neighbors
 
 from pointcept.models.utils import offset2batch, batch2offset
 from torch_geometric.nn.pool import voxel_grid
 from torch_scatter import segment_csr
 import pointops
+
+
+def adaptive_radius_search_pack_mode(
+    q_points: Tensor,
+    s_points: Tensor,
+    q_lengths: Tensor,
+    s_lengths: Tensor,
+    radius: Tensor,
+    neighbor_limit: int,
+    min_radius: float = 0.0,
+):
+    offset = torch.cumsum(s_lengths, dim=0).int()
+    q_offset = torch.cumsum(q_lengths, dim=0).int()
+    neighbors, distances = pointops.adaptive_ball_query(
+        neighbor_limit,
+        min_radius,
+        radius.reshape(-1).contiguous(),
+        s_points.contiguous(),
+        offset,
+        q_points.contiguous(),
+        q_offset,
+    )
+    return neighbors.long(), distances
 
 
 def scatter_grid_pool(points, lengths, grid_size, feat=None, start=None):
@@ -98,7 +122,9 @@ def fill_pyramid(pyramid: EasyDict,
                  neighbor_limits: List[int],
                  upsample_n: int = 1,
                  sub_mode: str = 'grid',
-                 grid_pool_mode: bool = False):
+                 grid_pool_mode: bool = False,
+                 da_radius_scales: List[Tensor] = None,
+                 da_radius_backend: str = "none"):
     """
     Fill the graph pyramid, with:
         > The subampled points for each layer, in pack mode.
@@ -133,7 +159,7 @@ def fill_pyramid(pyramid: EasyDict,
         neighb_func = radius_search_pack_mode
     else:
         # neighb_func = batch_radius_neighbors
-        neighb_func = batch_knn_neighbors
+        neighb_func = cpp_neighbors.batch_knn_neighbors
 
     # Subsample all point clouds on GPU
     points0 = pyramid.points[0]
@@ -181,12 +207,25 @@ def fill_pyramid(pyramid: EasyDict,
         # neighbors = neighb_func(cur_points, cur_points, cur_lengths, cur_lengths, search_radius, neighbor_limits[i])
         # pyramid.neighbors.append(neighbors)
 
-        # Get knn with pointops
-        offset = torch.cumsum(cur_lengths, dim=0)
-        reference_index, test0 = pointops.knn_query(neighbor_limits[i], cur_points, offset)
-        # Any index == -1 becomes the max index
-        reference_index[reference_index == -1] = cur_points.shape[0]
-        pyramid.neighbors.append(reference_index)
+        if da_radius_backend == "cuda" and da_radius_scales is not None and da_radius_scales[i] is not None:
+            radius_i = search_radius * da_radius_scales[i].to(device=cur_points.device, dtype=cur_points.dtype)
+            reference_index, _ = adaptive_radius_search_pack_mode(
+                cur_points,
+                cur_points,
+                cur_lengths,
+                cur_lengths,
+                radius_i,
+                neighbor_limits[i],
+            )
+            reference_index[reference_index < 0] = cur_points.shape[0]
+            pyramid.neighbors.append(reference_index)
+        else:
+            # Get knn with pointops
+            offset = torch.cumsum(cur_lengths, dim=0)
+            reference_index, test0 = pointops.knn_query(neighbor_limits[i], cur_points, offset)
+            # Any index == -1 becomes the max index
+            reference_index[reference_index == -1] = cur_points.shape[0]
+            pyramid.neighbors.append(reference_index)
 
         # Relation with next layer 
         if not grid_pool_mode and i < num_layers - 1:
@@ -225,7 +264,9 @@ def build_full_pyramid(points: Tensor,
                        neighbor_limits: List[int],
                        upsample_n: int = 1,
                        sub_mode: str = 'grid',
-                       grid_pool_mode: bool = False):
+                       grid_pool_mode: bool = False,
+                       da_radius_scales: List[Tensor] = None,
+                       da_radius_backend: str = "none"):
     """
     Build the graph pyramid, consisting of:
         > The subampled points for each layer, in pack mode.
@@ -245,7 +286,9 @@ def build_full_pyramid(points: Tensor,
                  neighbor_limits,
                  upsample_n,
                  sub_mode,
-                 grid_pool_mode)
+                 grid_pool_mode,
+                 da_radius_scales,
+                 da_radius_backend)
 
     return pyramid
 

@@ -2,6 +2,20 @@ import torch
 import torch.nn as nn
 
 
+class FeatureDropPath(nn.Module):
+    def __init__(self, drop_prob=0.0):
+        super().__init__()
+        self.drop_prob = float(drop_prob)
+
+    def forward(self, x):
+        if self.drop_prob <= 0.0 or not self.training:
+            return x
+        keep_prob = 1.0 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = x.new_empty(shape).bernoulli_(keep_prob)
+        return x.div(keep_prob) * random_tensor
+
+
 class CoordPositionalEncoding(nn.Module):
     def __init__(self, dim, hidden_dim=None):
         super().__init__()
@@ -78,21 +92,35 @@ class SGCALite(nn.Module):
         dim,
         num_heads=8,
         patch_size=256,
+        context_ratio=1.0,
         mlp_ratio=2.0,
         dropout=0.0,
+        drop_path=0.0,
     ):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
+        self.context_ratio = float(context_ratio)
 
-        self.pos_embed = CoordPositionalEncoding(dim)
-        self.pre_norm = nn.LayerNorm(dim)
+        context_dim = max(1, int(round(dim * self.context_ratio)))
+        context_dim = min(dim, context_dim)
+        num_heads = max(1, min(int(num_heads), context_dim))
+        while context_dim % num_heads != 0 and num_heads > 1:
+            num_heads -= 1
+        self.context_dim = context_dim
+        self.num_heads = num_heads
+
+        self.in_proj = nn.Identity() if context_dim == dim else nn.Linear(dim, context_dim)
+        self.out_proj = nn.Identity() if context_dim == dim else nn.Linear(context_dim, dim)
+        self.pos_embed = CoordPositionalEncoding(context_dim)
+        self.pre_norm = nn.LayerNorm(context_dim)
         self.block = SGCAAttentionBlock(
-            dim=dim,
+            dim=context_dim,
             num_heads=num_heads,
             mlp_ratio=mlp_ratio,
             dropout=dropout,
         )
+        self.drop_path = FeatureDropPath(drop_path)
 
         self.global_gate = nn.Sequential(
             nn.Linear(dim * 2, dim),
@@ -127,7 +155,7 @@ class SGCALite(nn.Module):
         if n <= 1:
             return feats
 
-        x = feats + self.pos_embed(coord)
+        x = self.in_proj(feats) + self.pos_embed(coord)
         x = self.pre_norm(x)
 
         order = self._serialization_order(coord)
@@ -145,11 +173,12 @@ class SGCALite(nn.Module):
         inverse[order] = torch.arange(n, device=order.device)
         x_out = x_out_sorted[inverse]
 
-        global_token = x_out.mean(dim=0, keepdim=True).expand(n, -1)
+        x_context = self.out_proj(x_out)
+        global_token = x_context.mean(dim=0, keepdim=True).expand(n, -1)
         gate = self.global_gate(torch.cat([feats, global_token], dim=-1))
-        fused = self.fuse(torch.cat([x_out, global_token], dim=-1))
+        fused = self.fuse(torch.cat([x_context, global_token], dim=-1))
 
-        return feats + gate * fused
+        return feats + self.drop_path(gate * fused)
 
     def forward(self, feats, coord, lengths):
         """

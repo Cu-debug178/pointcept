@@ -32,11 +32,16 @@ class KPConvXStage1(KPConvXBase):
         input_channels=None,
         num_classes=13,
         enable_global=True,
+        global_context_type="serialized_patch",
         global_stages=(3, 4, 5),
+        global_context_stages=None,
         global_patch_sizes=(128, 256, 384),
+        global_patch_size=None,
         global_num_heads=(8, 8, 16),
+        global_context_ratio=1.0,
         global_mlp_ratio=2.0,
         global_dropout=0.0,
+        global_context_drop_path=0.0,
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs
@@ -57,6 +62,26 @@ class KPConvXStage1(KPConvXBase):
             **kwargs
         )
 
+        if global_context_type not in (
+            "sgca",
+            "serialized_patch",
+            "serialized_patch_context",
+            "ptv3_serialized_patch",
+        ):
+            raise ValueError(f"Unsupported global_context_type: {global_context_type}")
+
+        if global_context_stages is not None:
+            global_stages = global_context_stages
+
+        if global_patch_size is not None:
+            if isinstance(global_patch_size, int):
+                global_patch_sizes = tuple(global_patch_size for _ in global_stages)
+            else:
+                global_patch_sizes = tuple(global_patch_size)
+
+        self.global_context_type = global_context_type
+        self.global_context_ratio = global_context_ratio
+        self.global_context_drop_path = global_context_drop_path
         self.enable_global = enable_global
         self.global_stages = tuple(global_stages) if enable_global else tuple()
 
@@ -88,8 +113,10 @@ class KPConvXStage1(KPConvXBase):
                     dim=dim,
                     num_heads=num_heads,
                     patch_size=patch_size,
+                    context_ratio=global_context_ratio,
                     mlp_ratio=global_mlp_ratio,
                     dropout=global_dropout,
+                    drop_path=global_context_drop_path,
                 ),
             )
 

@@ -1,0 +1,214 @@
+<mxfile host="app.diagrams.net" modified="2026-05-19T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="overall-kpconvx-hybrid" name="Fig1 总体框架">
+    <mxGraphModel dx="2600" dy="1400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1250" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="fig1_title" value="KPConvXHybrid 总体框架：DA-Radius + DA-Kernel + Router-Guided SGCA + Refine" style="text;html=1;strokeColor=none;fillColor=none;fontSize=30;fontStyle=1;fontFamily=Times New Roman;align=center;" vertex="1" parent="1">
+          <mxGeometry x="260" y="20" width="1680" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="scene_raw" value="Raw Point Cloud&#xa;coord / feat / offset" style="shape=parallelogram;html=1;whiteSpace=wrap;rounded=0;fillColor=#f7f7f7;strokeColor=#666666;strokeWidth=3;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="180" width="210" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="stem" value="Stem&#xa;KPConv / KPConvX" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=3;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="185" width="180" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc1" value="Stage 1&#xa;N0, 64&#xa;Local KPConvX" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=3;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="600" y="185" width="180" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool1" value="Grid Maxpool&#xa;x2.2" style="shape=mxgraph.basic.grid;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#666666;strokeWidth=2;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="820" y="180" width="80" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc2" value="Stage 2&#xa;N1, 96/384&#xa;DA-Radius + DA-Kernel" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#e1f5fe;strokeColor=#29b6f6;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="960" y="185" width="210" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool2" value="Grid Maxpool&#xa;x2.2" style="shape=mxgraph.basic.grid;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#666666;strokeWidth=2;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="180" width="80" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc3" value="Stage 3&#xa;N2, 128/512&#xa;DA-Radius + DA-Kernel&#xa;Router" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#e1f5fe;strokeColor=#29b6f6;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="175" width="230" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool3" value="Grid Maxpool&#xa;x2.2" style="shape=mxgraph.basic.grid;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#666666;strokeWidth=2;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="1620" y="180" width="80" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc4" value="Stage 4&#xa;N3, 192/768&#xa;DA-Radius + DA-Kernel&#xa;Router + SGCA" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#e8f5e9;strokeColor=#43a047;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1760" y="170" width="250" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool4" value="Grid Maxpool&#xa;x2.2" style="shape=mxgraph.basic.grid;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#666666;strokeWidth=2;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="2050" y="180" width="80" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc5" value="Stage 5 Bottleneck&#xa;N4, 256/1024&#xa;SGCA Global Context" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#e8f5e9;strokeColor=#43a047;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1830" y="410" width="250" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec4" value="Up + Grid Up&#xa;Concat Skip&#xa;Decoder Block" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#f3e5f5;strokeColor=#8e24aa;strokeWidth=3;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="420" width="220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec3" value="Up + Grid Up&#xa;Concat Skip&#xa;Decoder Block" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#f3e5f5;strokeColor=#8e24aa;strokeWidth=3;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="420" width="220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec2" value="Up + Grid Up&#xa;Concat Skip&#xa;Decoder Block" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#f3e5f5;strokeColor=#8e24aa;strokeWidth=3;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="730" y="420" width="220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec1" value="Up + Grid Up&#xa;Concat Skip&#xa;Decoder Block" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#f3e5f5;strokeColor=#8e24aa;strokeWidth=3;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="380" y="420" width="220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="refine" value="DecoderRefineHead&#xa;coords + boundary cues" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#ffebee;strokeColor=#e53935;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="420" width="210" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="head" value="Segmentation Head&#xa;logits" style="shape=parallelogram;html=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=3;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="630" width="210" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="seg_out" value="Semantic Labels" style="shape=parallelogram;html=1;whiteSpace=wrap;fillColor=#f7f7f7;strokeColor=#666666;strokeWidth=3;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="630" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="da_band" value="Density-Adaptive Local Geometry Path" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;fillColor=#e1f5fe;strokeColor=#29b6f6;strokeWidth=2;dashed=1;fontSize=20;fontStyle=1;align=left;verticalAlign=top;spacingLeft=18;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="105" width="680" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="sgca_band" value="Sparse Global Context Path" style="rounded=1;whiteSpace=wrap;html=1;arcSize=5;fillColor=#e8f5e9;strokeColor=#43a047;strokeWidth=2;dashed=1;fontSize=20;fontStyle=1;align=left;verticalAlign=top;spacingLeft=18;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="1730" y="105" width="390" height="450" as="geometry"/>
+        </mxCell>
+        <mxCell id="impl_note1" value="实现入口：pointcept/models/kpconvx_hybrid/kpconvx_hybrid.py&#xa;邻域重建：KPConvXStage2._build_pyramid()&#xa;CUDA 查询：pointops.adaptive_ball_query" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fffde7;strokeColor=#fbc02d;strokeWidth=2;fontSize=17;align=left;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="690" y="660" width="700" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend1" value="蓝色：密度自适应局部算子&#xa;绿色：SGCA/serialized patch 全局上下文&#xa;紫色：decoder 上采样路径&#xa;红色：边界/细化头" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=3;dashed=1;fontSize=18;align=left;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="650" width="450" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_scene_stem" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="scene_raw" target="stem"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_stem_enc1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="stem" target="enc1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc1_pool1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="enc1" target="pool1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool1_enc2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="pool1" target="enc2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc2_pool2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="enc2" target="pool2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool2_enc3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="pool2" target="enc3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc3_pool3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="enc3" target="pool3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool3_enc4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="pool3" target="enc4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc4_pool4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="enc4" target="pool4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool4_enc5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="pool4" target="enc5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc5_dec4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="enc5" target="dec4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec4_dec3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="dec4" target="dec3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec3_dec2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="dec3" target="dec2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec2_dec1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="dec2" target="dec1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec1_refine" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="dec1" target="refine"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_refine_head" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="refine" target="head"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_head_out" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="head" target="seg_out"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="skip1" value="skip" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=open;strokeColor=#777777;strokeWidth=2;dashed=1;fontSize=14;" edge="1" parent="1" source="enc1" target="dec1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="skip2" value="skip" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=open;strokeColor=#777777;strokeWidth=2;dashed=1;fontSize=14;" edge="1" parent="1" source="enc2" target="dec2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="skip3" value="skip" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=open;strokeColor=#777777;strokeWidth=2;dashed=1;fontSize=14;" edge="1" parent="1" source="enc3" target="dec3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="skip4" value="skip" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=open;strokeColor=#777777;strokeWidth=2;dashed=1;fontSize=14;" edge="1" parent="1" source="enc4" target="dec4"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="da-radius-detail" name="Fig2 DA-Radius 邻域构建">
+    <mxGraphModel dx="2200" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="fig2_title" value="DA-Radius：按点密度自适应邻域半径并重建 pyramid neighbors" style="text;html=1;strokeColor=none;fillColor=none;fontSize=30;fontStyle=1;fontFamily=Times New Roman;align=center;" vertex="1" parent="1"><mxGeometry x="180" y="25" width="1500" height="50" as="geometry"/></mxCell>
+        <mxCell id="f2_panel_l" value="A. 基础邻域估计" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#90caf9;strokeWidth=2;fontSize=22;fontStyle=1;align=left;verticalAlign=top;spacing=12;" vertex="1" parent="1"><mxGeometry x="70" y="100" width="530" height="530" as="geometry"/></mxCell>
+        <mxCell id="f2_panel_m" value="B. 生成 per-point radius scale" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fffde7;strokeColor=#fbc02d;strokeWidth=2;fontSize=22;fontStyle=1;align=left;verticalAlign=top;spacing=12;" vertex="1" parent="1"><mxGeometry x="675" y="100" width="530" height="530" as="geometry"/></mxCell>
+        <mxCell id="f2_panel_r" value="C. CUDA adaptive_ball_query" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f1f8e9;strokeColor=#7cb342;strokeWidth=2;fontSize=22;fontStyle=1;align=left;verticalAlign=top;spacing=12;" vertex="1" parent="1"><mxGeometry x="1280" y="100" width="530" height="530" as="geometry"/></mxCell>
+        <mxCell id="pts_dense" value="dense" style="ellipse;html=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;strokeWidth=2;fontSize=16;" vertex="1" parent="1"><mxGeometry x="180" y="230" width="45" height="45" as="geometry"/></mxCell>
+        <mxCell id="pts_dense2" value="" style="ellipse;html=1;fillColor=#bbdefb;strokeColor=#1565c0;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="240" y="205" width="35" height="35" as="geometry"/></mxCell>
+        <mxCell id="pts_dense3" value="" style="ellipse;html=1;fillColor=#bbdefb;strokeColor=#1565c0;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="280" y="260" width="35" height="35" as="geometry"/></mxCell>
+        <mxCell id="pts_dense4" value="" style="ellipse;html=1;fillColor=#bbdefb;strokeColor=#1565c0;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="225" y="300" width="35" height="35" as="geometry"/></mxCell>
+        <mxCell id="pts_sparse" value="sparse" style="ellipse;html=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=2;fontSize=16;" vertex="1" parent="1"><mxGeometry x="390" y="410" width="55" height="55" as="geometry"/></mxCell>
+        <mxCell id="pts_sparse2" value="" style="ellipse;html=1;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="500" y="350" width="35" height="35" as="geometry"/></mxCell>
+        <mxCell id="pts_sparse3" value="" style="ellipse;html=1;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="465" y="510" width="35" height="35" as="geometry"/></mxCell>
+        <mxCell id="base_query" value="build_full_pyramid()&#xa;first_radius, radius_scaling&#xa;neighbor_limits" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#555555;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="500" width="330" height="90" as="geometry"/></mxCell>
+        <mxCell id="density_stats" value="DensityAdaptiveRadius&#xa;mean_neighbor_distance&#xa;percentile normalize&#xa;scale_range = [0.8, 1.5]" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="775" y="210" width="320" height="130" as="geometry"/></mxCell>
+        <mxCell id="formula_rho" value="rho_i = 1 / (mean_dist_i + eps)&#xa;dense: high rho -> smaller radius&#xa;sparse: low rho -> larger radius" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=18;fontFamily=Times New Roman;" vertex="1" parent="1"><mxGeometry x="765" y="390" width="340" height="120" as="geometry"/></mxCell>
+        <mxCell id="radius_tensor" value="radius_i = base_radius_l * scale_i&#xa;shape: [N_l]" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#ffe0b2;strokeColor=#ef6c00;strokeWidth=3;fontSize=19;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="775" y="535" width="330" height="70" as="geometry"/></mxCell>
+        <mxCell id="adaptive_query" value="pointops.adaptive_ball_query&#xa;nsample, min_radius, radius_i&#xa;xyz, new_xyz, offset" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1375" y="185" width="335" height="110" as="geometry"/></mxCell>
+        <mxCell id="new_neighbors" value="new neighbors[l]&#xa;outside_count = 0&#xa;unique count follows density" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#2e7d32;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="1380" y="405" width="325" height="110" as="geometry"/></mxCell>
+        <mxCell id="cuda_note" value="CUDA path: da_radius_backend='cuda'&#xa;Torch path: fallback reference / ablation&#xa;Linux GPU training: compile libs/pointops first" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;dashed=1;fontSize=17;align=left;spacing=12;" vertex="1" parent="1"><mxGeometry x="1260" y="710" width="560" height="110" as="geometry"/></mxCell>
+        <mxCell id="impl_note2" value="代码映射&#xa;KPConvXStage2._build_pyramid(): 两次 build_full_pyramid&#xa;torch_pyramid.py: da_radius_scales -> adaptive query&#xa;libs/pointops/functions/query.py: AdaptiveBallQuery" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#555555;strokeWidth=2;fontSize=17;align=left;spacing=12;" vertex="1" parent="1"><mxGeometry x="70" y="700" width="700" height="130" as="geometry"/></mxCell>
+        <mxCell id="e_base_density" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="base_query" target="density_stats"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_density_formula" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="density_stats" target="formula_rho"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_formula_radius" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="formula_rho" target="radius_tensor"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_radius_adaptive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="radius_tensor" target="adaptive_query"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_adaptive_neighbors" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="adaptive_query" target="new_neighbors"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r_small" value="small r_i" style="ellipse;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#1565c0;strokeWidth=4;dashed=1;fontSize=16;" vertex="1" parent="1"><mxGeometry x="1360" y="340" width="130" height="130" as="geometry"/></mxCell>
+        <mxCell id="r_big" value="large r_j" style="ellipse;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#c62828;strokeWidth=4;dashed=1;fontSize=16;" vertex="1" parent="1"><mxGeometry x="1535" y="320" width="210" height="210" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="operator-comparison" name="Fig3 算子对比">
+    <mxGraphModel dx="2600" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2300" pageHeight="1150" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="fig3_title" value="KPConvX 改造前后对比：DA-Kernel 是核点缩放，DA-Radius 是邻域搜索半径缩放" style="text;html=1;strokeColor=none;fillColor=none;fontSize=30;fontStyle=1;fontFamily=Times New Roman;align=center;" vertex="1" parent="1"><mxGeometry x="250" y="25" width="1800" height="50" as="geometry"/></mxCell>
+        <mxCell id="base_col" value="Baseline KPConvX" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#777777;strokeWidth=3;fontSize=26;fontStyle=1;align=center;verticalAlign=top;spacingTop=18;" vertex="1" parent="1"><mxGeometry x="80" y="110" width="650" height="650" as="geometry"/></mxCell>
+        <mxCell id="kernel_col" value="DA-Kernel Ablation" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=3;fontSize=26;fontStyle=1;align=center;verticalAlign=top;spacingTop=18;" vertex="1" parent="1"><mxGeometry x="825" y="110" width="650" height="650" as="geometry"/></mxCell>
+        <mxCell id="radius_col" value="DA-Radius Main Change" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=3;fontSize=26;fontStyle=1;align=center;verticalAlign=top;spacingTop=18;" vertex="1" parent="1"><mxGeometry x="1570" y="110" width="650" height="650" as="geometry"/></mxCell>
+        <mxCell id="base_neigh" value="Fixed ball query&#xa;base_radius_l" style="ellipse;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#999999;strokeWidth=4;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="250" width="220" height="220" as="geometry"/></mxCell>
+        <mxCell id="base_features" value="Neighbor Features&#xa;H x C" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#e53935;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="430" y="280" width="190" height="80" as="geometry"/></mxCell>
+        <mxCell id="base_kpx" value="KPConvX&#xa;kernel attention&#xa;sum" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e3f2fd;strokeColor=#1e88e5;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="430" y="440" width="190" height="100" as="geometry"/></mxCell>
+        <mxCell id="kernel_scale" value="DensityAdaptiveScale&#xa;s_i in [0.5, 2.0]" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffe0b2;strokeColor=#ef6c00;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="930" y="210" width="260" height="90" as="geometry"/></mxCell>
+        <mxCell id="kernel_formula" value="kernel points:&#xa;p_k_da = s_i * p_k&#xa;neighbors unchanged" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=18;fontFamily=Times New Roman;" vertex="1" parent="1"><mxGeometry x="1030" y="365" width="300" height="110" as="geometry"/></mxCell>
+        <mxCell id="kernel_block" value="DAKPNextMultiShortcutBlock&#xa;da_scale passed into DAKPConvX" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e3f2fd;strokeColor=#1e88e5;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1010" y="545" width="330" height="90" as="geometry"/></mxCell>
+        <mxCell id="radius_scale" value="DensityAdaptiveRadius&#xa;scale_i in [0.8, 1.5]" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1680" y="210" width="270" height="90" as="geometry"/></mxCell>
+        <mxCell id="radius_formula" value="query radius:&#xa;r_i = radius_l * scale_i&#xa;neighbors rebuilt by CUDA" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=18;fontFamily=Times New Roman;" vertex="1" parent="1"><mxGeometry x="1785" y="365" width="300" height="110" as="geometry"/></mxCell>
+        <mxCell id="radius_block" value="adaptive_ball_query&#xa;per-point radius tensor&#xa;new neighbors feed KPConvX" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1765" y="545" width="330" height="100" as="geometry"/></mxCell>
+        <mxCell id="compare_note" value="建议论文叙述：DA-Radius 改变 local graph construction，是主贡献；DA-Kernel 改变 kernel projection / influence，可作为独立消融。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#555555;strokeWidth=2;fontSize=20;align=left;spacing=14;" vertex="1" parent="1"><mxGeometry x="260" y="830" width="1750" height="90" as="geometry"/></mxCell>
+        <mxCell id="e_base_feat_kpx" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="base_features" target="base_kpx"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_kernel_scale_formula" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="kernel_scale" target="kernel_formula"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_kernel_formula_block" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="kernel_formula" target="kernel_block"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_radius_scale_formula" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="radius_scale" target="radius_formula"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_radius_formula_block" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="radius_formula" target="radius_block"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="global-router-refine" name="Fig4 SGCA Router Refine">
+    <mxGraphModel dx="2300" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2050" pageHeight="1150" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="fig4_title" value="全局上下文、难度路由与解码细化模块说明" style="text;html=1;strokeColor=none;fillColor=none;fontSize=30;fontStyle=1;fontFamily=Times New Roman;align=center;" vertex="1" parent="1"><mxGeometry x="270" y="25" width="1500" height="50" as="geometry"/></mxCell>
+        <mxCell id="sgca_panel" value="A. SGCALite / Serialized Patch Attention" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#43a047;strokeWidth=3;fontSize=24;fontStyle=1;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1"><mxGeometry x="70" y="110" width="850" height="430" as="geometry"/></mxCell>
+        <mxCell id="router_panel" value="B. GeometryDifficultyRouter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=3;fontSize=24;fontStyle=1;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1"><mxGeometry x="1010" y="110" width="900" height="430" as="geometry"/></mxCell>
+        <mxCell id="refine_panel" value="C. DecoderRefineHead" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#e53935;strokeWidth=3;fontSize=24;fontStyle=1;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1"><mxGeometry x="330" y="650" width="1350" height="300" as="geometry"/></mxCell>
+        <mxCell id="sgca_in" value="stage feats + coords&#xa;[N_l, C_l]" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=18;" vertex="1" parent="1"><mxGeometry x="120" y="235" width="170" height="80" as="geometry"/></mxCell>
+        <mxCell id="sgca_order" value="serialization order&#xa;xyz sort proxy" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="350" y="220" width="190" height="90" as="geometry"/></mxCell>
+        <mxCell id="sgca_patch" value="split patches&#xa;patch_size 192 / 320" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="590" y="220" width="200" height="90" as="geometry"/></mxCell>
+        <mxCell id="sgca_attn" value="MultiheadAttention&#xa;+ MLP residual" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e3f2fd;strokeColor=#1e88e5;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="455" y="370" width="220" height="85" as="geometry"/></mxCell>
+        <mxCell id="router_stats" value="neighbor stats&#xa;mean_dist, dist_var, feat_var" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#fff3e0;strokeColor=#ef6c00;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1080" y="210" width="260" height="90" as="geometry"/></mxCell>
+        <mxCell id="router_mlp" value="router MLP&#xa;difficulty_head" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1410" y="210" width="220" height="90" as="geometry"/></mxCell>
+        <mxCell id="router_weight" value="global_weight&#xa;sigmoid(logit + boost*difficulty)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffe0b2;strokeColor=#ef6c00;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1660" y="210" width="210" height="100" as="geometry"/></mxCell>
+        <mxCell id="fusion_formula" value="f_out = f + global_weight * (SGCA(f) - f)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=20;fontFamily=Times New Roman;" vertex="1" parent="1"><mxGeometry x="1210" y="390" width="520" height="70" as="geometry"/></mxCell>
+        <mxCell id="ref_in" value="decoder features&#xa;+ original coords&#xa;+ stage-1 neighbors" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=18;" vertex="1" parent="1"><mxGeometry x="420" y="760" width="210" height="90" as="geometry"/></mxCell>
+        <mxCell id="ref_boundary" value="boundary / local contrast cues" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="720" y="760" width="250" height="90" as="geometry"/></mxCell>
+        <mxCell id="ref_fuse" value="lightweight residual refine" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=3;fontSize=18;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1060" y="760" width="250" height="90" as="geometry"/></mxCell>
+        <mxCell id="ref_out" value="refined logits input" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=2;fontSize=18;" vertex="1" parent="1"><mxGeometry x="1400" y="760" width="200" height="90" as="geometry"/></mxCell>
+        <mxCell id="e_sgca1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="sgca_in" target="sgca_order"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_sgca2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="sgca_order" target="sgca_patch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_sgca3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="sgca_patch" target="sgca_attn"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_router1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="router_stats" target="router_mlp"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_router2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="router_mlp" target="router_weight"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_router3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="router_weight" target="fusion_formula"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_ref1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="ref_in" target="ref_boundary"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_ref2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="ref_boundary" target="ref_fuse"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_ref3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#000000;strokeWidth=3;" edge="1" parent="1" source="ref_fuse" target="ref_out"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="legend-and-mapping" name="Fig5 图例与实现映射">
+    <mxGraphModel dx="2000" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1050" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="fig5_title" value="图例、开关与代码实现映射" style="text;html=1;strokeColor=none;fillColor=none;fontSize=30;fontStyle=1;fontFamily=Times New Roman;align=center;" vertex="1" parent="1"><mxGeometry x="250" y="30" width="1300" height="50" as="geometry"/></mxCell>
+        <mxCell id="legend_panel" value="A. 图例" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=3;fontSize=24;fontStyle=1;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1"><mxGeometry x="90" y="130" width="520" height="650" as="geometry"/></mxCell>
+        <mxCell id="switch_panel" value="B. 关键开关" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7f7f7;strokeColor=#333333;strokeWidth=3;fontSize=24;fontStyle=1;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1"><mxGeometry x="700" y="130" width="480" height="650" as="geometry"/></mxCell>
+        <mxCell id="mapping_panel" value="C. 实现文件映射" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7f7f7;strokeColor=#333333;strokeWidth=3;fontSize=24;fontStyle=1;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1"><mxGeometry x="1270" y="130" width="480" height="650" as="geometry"/></mxCell>
+        <mxCell id="leg_local" value="DA-Radius / DA-Kernel&#xa;local geometry" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e1f5fe;strokeColor=#29b6f6;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="230" width="330" height="75" as="geometry"/></mxCell>
+        <mxCell id="leg_global" value="SGCA serialized patch&#xa;global context" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e8f5e9;strokeColor=#43a047;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="340" width="330" height="75" as="geometry"/></mxCell>
+        <mxCell id="leg_router" value="Router / difficulty weight" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="450" width="330" height="75" as="geometry"/></mxCell>
+        <mxCell id="leg_decoder" value="Decoder / Up / Grid Up" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#f3e5f5;strokeColor=#8e24aa;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="560" width="330" height="75" as="geometry"/></mxCell>
+        <mxCell id="leg_refine" value="Refine / boundary cues" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffebee;strokeColor=#e53935;strokeWidth=3;fontSize=18;" vertex="1" parent="1"><mxGeometry x="170" y="670" width="330" height="75" as="geometry"/></mxCell>
+        <mxCell id="switches" value="use_da_radius / enable_da_radius&#xa;da_radius_backend = 'cuda' or 'torch'&#xa;da_radius_stages = (2,3,4)&#xa;use_da_kernel / enable_da&#xa;use_global_context / enable_global&#xa;global_context_type = serialized_patch&#xa;router_stages = (2,3,4)&#xa;enable_refine" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#777777;strokeWidth=2;fontSize=19;align=left;spacing=16;" vertex="1" parent="1"><mxGeometry x="765" y="230" width="350" height="400" as="geometry"/></mxCell>
+        <mxCell id="mapping" value="kpconvx_hybrid.py&#xa;  - final forward path&#xa;  - router-guided SGCA fusion&#xa;&#xa;kpx_stage2.py&#xa;  - _build_pyramid()&#xa;  - DA scale / DA radius&#xa;&#xa;torch_pyramid.py&#xa;  - pyramid neighbor construction&#xa;&#xa;libs/pointops/functions/query.py&#xa;  - adaptive_ball_query Python binding&#xa;&#xa;libs/pointops/src/ball_query/*&#xa;  - CUDA/C++ implementation" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#777777;strokeWidth=2;fontSize=18;align=left;spacing=16;" vertex="1" parent="1"><mxGeometry x="1325" y="220" width="360" height="465" as="geometry"/></mxCell>
+        <mxCell id="caption" value="这些页面可直接作为论文图初稿继续编辑：Fig1 总体结构，Fig2 DA-Radius 机制，Fig3 算子对比，Fig4 子模块说明，Fig5 图例/实现映射。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fffde7;strokeColor=#fbc02d;strokeWidth=2;fontSize=20;align=center;" vertex="1" parent="1"><mxGeometry x="220" y="870" width="1360" height="80" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

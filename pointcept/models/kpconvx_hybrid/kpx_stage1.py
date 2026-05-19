@@ -46,6 +46,29 @@ class KPConvXStage1(KPConvXBase):
         channel_scaling=math.sqrt(2),
         **kwargs
     ):
+        if "use_global_context" in kwargs:
+            enable_global = kwargs.pop("use_global_context")
+
+        # Do not let hybrid-only ablation switches leak into KPConvXBase.
+        for key in (
+            "enable_da",
+            "use_da_kernel",
+            "da_stages",
+            "da_scale_range",
+            "da_density_k",
+            "enable_da_radius",
+            "use_da_radius",
+            "da_radius_stages",
+            "da_radius_scale_range",
+            "da_radius_density_k",
+            "da_radius_norm",
+            "da_radius_percentile",
+            "da_radius_strength",
+            "da_radius_power",
+            "da_radius_backend",
+        ):
+            kwargs.pop(key, None)
+
         if input_channels is None:
             input_channels = in_channels
         if input_channels is None:

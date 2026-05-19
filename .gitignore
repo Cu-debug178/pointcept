@@ -5,7 +5,8 @@ docs/*
 !docs/DA_RADIUS_FINAL_REPORT.md
 !docs/DA_RADIUS_COMPLETION_REPORT.md
 !docs/DA_RADIUS_MODEL_ARCH.drawio
-docs/papers/
+!docs/papers/
+!docs/papers/**
 .claude/
 Pointcept_backup/
 Pointcept/__pointcept_casefix_tmp*/

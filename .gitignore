@@ -4,6 +4,7 @@ docs/*
 !docs/DA_RADIUS_STAGE_REPORT.md
 !docs/DA_RADIUS_FINAL_REPORT.md
 !docs/DA_RADIUS_COMPLETION_REPORT.md
+!docs/DA_RADIUS_MODEL_ARCH.drawio
 docs/papers/
 .claude/
 Pointcept_backup/

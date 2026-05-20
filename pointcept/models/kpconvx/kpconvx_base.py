@@ -43,7 +43,7 @@ class KPConvXBase(nn.Module):
                  dim=3,
                  task='cloud_segmentation',
                  kp_mode='kpconvx',
-                 kp_influence='linear',
+                 kp_influence='constant',
                  kp_aggregation='nearest',
                  shell_sizes=(1, 14, 28),
                  kp_radius=2.3,

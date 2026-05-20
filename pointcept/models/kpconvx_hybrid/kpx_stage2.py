@@ -66,12 +66,14 @@ class KPConvXStage2(KPConvXStage1):
         use_da_radius=None,
         da_radius_stages=(2, 3, 4),
         da_radius_scale_range=(0.8, 1.5),
+        da_radius_stage_ranges=None,
         da_radius_density_k=16,
         da_radius_norm="percentile",
         da_radius_percentile=(10, 90),
         da_radius_strength=0.75,
         da_radius_power=1.0,
         da_radius_backend="torch",
+        da_radius_apply_block_mask=None,
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs,
@@ -100,12 +102,16 @@ class KPConvXStage2(KPConvXStage1):
         self.enable_da_radius = bool(enable_da_radius)
         self.da_radius_stages = tuple(da_radius_stages) if enable_da_radius else tuple()
         self.da_radius_scale_range = da_radius_scale_range
+        self.da_radius_stage_ranges = self._normalize_stage_ranges(
+            da_radius_stage_ranges
+        )
         self.da_radius_density_k = da_radius_density_k
         self.da_radius_norm = da_radius_norm
         self.da_radius_percentile = da_radius_percentile
         self.da_radius_strength = da_radius_strength
         self.da_radius_power = da_radius_power
         self.da_radius_backend = da_radius_backend
+        self.da_radius_apply_block_mask = da_radius_apply_block_mask
 
         super().__init__(
             input_channels=input_channels,
@@ -131,6 +137,43 @@ class KPConvXStage2(KPConvXStage1):
             strength=da_radius_strength,
             power=da_radius_power,
         )
+
+    @staticmethod
+    def _normalize_stage_ranges(stage_ranges):
+        if stage_ranges is None:
+            return {}
+
+        if isinstance(stage_ranges, dict):
+            return {
+                int(stage): tuple(scale_range)
+                for stage, scale_range in stage_ranges.items()
+            }
+
+        normalized = {}
+        for item in stage_ranges:
+            if isinstance(item, dict):
+                stage = item.get("stage")
+                scale_range = item.get("range", item.get("scale_range"))
+            else:
+                stage, scale_range = item
+            normalized[int(stage)] = tuple(scale_range)
+        return normalized
+
+    def _get_da_radius_scale_range(self, stage_idx):
+        return self.da_radius_stage_ranges.get(
+            int(stage_idx), self.da_radius_scale_range
+        )
+
+    def _should_apply_da_radius_block_mask(self):
+        if not self.enable_da_radius:
+            return False
+
+        if self.da_radius_apply_block_mask is not None:
+            return bool(self.da_radius_apply_block_mask)
+
+        # CUDA backend already changes the neighbor graph with adaptive radius.
+        # Applying the block-level mask again over-restricts neighbors.
+        return self.da_radius_backend != "cuda"
 
     def get_residual_block(
         self,
@@ -217,11 +260,14 @@ class KPConvXStage2(KPConvXStage1):
         if stage_idx not in self.da_radius_stages:
             return None
 
+        if not self._should_apply_da_radius_block_mask():
+            return None
+
         return self.da_radius(
             points=points,
             neighbors=neighbors,
             lengths=lengths,
-            scale_range=self.da_radius_scale_range,
+            scale_range=self._get_da_radius_scale_range(stage_idx),
         )
 
     def _build_pyramid(self, points, lengths):
@@ -254,7 +300,7 @@ class KPConvXStage2(KPConvXStage1):
                         points=in_dict.points[l],
                         neighbors=in_dict.neighbors[l],
                         lengths=in_dict.lengths[l],
-                        scale_range=self.da_radius_scale_range,
+                        scale_range=self._get_da_radius_scale_range(layer),
                     )
                 )
             else:

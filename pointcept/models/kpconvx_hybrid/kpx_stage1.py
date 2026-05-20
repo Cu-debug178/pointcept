@@ -60,12 +60,14 @@ class KPConvXStage1(KPConvXBase):
             "use_da_radius",
             "da_radius_stages",
             "da_radius_scale_range",
+            "da_radius_stage_ranges",
             "da_radius_density_k",
             "da_radius_norm",
             "da_radius_percentile",
             "da_radius_strength",
             "da_radius_power",
             "da_radius_backend",
+            "da_radius_apply_block_mask",
         ):
             kwargs.pop(key, None)
 

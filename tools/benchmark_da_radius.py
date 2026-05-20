@@ -73,32 +73,21 @@ def torch_radius_mask(points, offset, radius, nsample):
         kk = min(nsample, pts.shape[0])
         vals, idx = torch.topk(masked_dist, k=kk, largest=False)
 
-        empty = torch.isinf(vals[:, 0])
-        if empty.any():
-            fallback_vals, fallback_idx = torch.topk(dist[empty], k=1, largest=False)
-            vals[empty, 0:1] = fallback_vals
-            idx[empty, 0:1] = fallback_idx
-
         finite = torch.isfinite(vals)
-        for row_idx in range(vals.shape[0]):
-            invalid = ~finite[row_idx]
-            if invalid.any():
-                valid_pos = torch.nonzero(finite[row_idx], as_tuple=False).flatten()
-                if valid_pos.numel() == 0:
-                    nearest_val, nearest_idx = torch.topk(dist[row_idx], k=1, largest=False)
-                    vals[row_idx, 0] = nearest_val[0]
-                    idx[row_idx, 0] = nearest_idx[0]
-                    fill_pos = 0
-                else:
-                    fill_pos = valid_pos[-1].item()
-                vals[row_idx, invalid] = vals[row_idx, fill_pos].clone()
-                idx[row_idx, invalid] = idx[row_idx, fill_pos].clone()
+        idx = idx.masked_fill(~finite, -1)
+        vals = vals.masked_fill(~finite, 0.0)
 
         if kk < nsample:
-            idx = torch.cat([idx, idx[:, -1:].expand(-1, nsample - kk)], dim=1)
-            vals = torch.cat([vals, vals[:, -1:].expand(-1, nsample - kk)], dim=1)
+            idx = torch.cat(
+                [idx, idx.new_full((idx.shape[0], nsample - kk), -1)],
+                dim=1,
+            )
+            vals = torch.cat(
+                [vals, vals.new_zeros((vals.shape[0], nsample - kk))],
+                dim=1,
+            )
 
-        idx = idx + start
+        idx = torch.where(idx >= 0, idx + start, idx)
         rows.append(idx.int())
         distances.append(vals)
         start = end
@@ -108,10 +97,14 @@ def torch_radius_mask(points, offset, radius, nsample):
 
 def unique_neighbor_count(idx):
     return torch.tensor(
-        [torch.unique(row).numel() for row in idx],
+        [torch.unique(row[row >= 0]).numel() for row in idx],
         dtype=torch.float32,
         device=idx.device,
     )
+
+
+def shadow_ratio(idx):
+    return (idx < 0).float().mean()
 
 
 def time_cuda(fn, warmup, repeat):
@@ -196,8 +189,9 @@ def main():
         args.warmup,
         args.repeat,
     )
-    outside_count = (dist > radius.view(-1, 1) + 1e-4).sum().item()
+    outside_count = ((dist > radius.view(-1, 1) + 1e-4) & (idx >= 0)).sum().item()
     adaptive_unique_count = unique_neighbor_count(idx)
+    adaptive_shadow_ratio = shadow_ratio(idx)
 
     knn_ms, knn_peak_mb, (knn_idx, _) = timer(
         lambda: pointops.knn_query(args.nsample, points, offset),
@@ -211,8 +205,11 @@ def main():
         args.warmup,
         args.repeat,
     )
-    torch_outside_count = (torch_dist > radius.view(-1, 1) + 1e-4).sum().item()
+    torch_outside_count = (
+        (torch_dist > radius.view(-1, 1) + 1e-4) & (torch_idx >= 0)
+    ).sum().item()
     torch_unique_count = unique_neighbor_count(torch_idx)
+    torch_shadow_ratio = shadow_ratio(torch_idx)
 
     print("da_radius_benchmark:")
     print(f"  device={device}")
@@ -229,10 +226,12 @@ def main():
     print(f"  adaptive_unique_neighbors_min={adaptive_unique_count.min().item():.2f}")
     print(f"  adaptive_unique_neighbors_mean={adaptive_unique_count.mean().item():.2f}")
     print(f"  adaptive_unique_neighbors_max={adaptive_unique_count.max().item():.2f}")
+    print(f"  adaptive_shadow_ratio={adaptive_shadow_ratio.item():.4f}")
     print(f"  adaptive_outside_count={outside_count}")
     print(f"  torch_mask_ms={torch_ms:.3f}")
     print(f"  torch_mask_peak_mb={torch_peak_mb:.2f}")
     print(f"  torch_mask_unique_neighbors_mean={torch_unique_count.mean().item():.2f}")
+    print(f"  torch_mask_shadow_ratio={torch_shadow_ratio.item():.4f}")
     print(f"  torch_mask_outside_count={torch_outside_count}")
     print(f"  knn_query_ms={knn_ms:.3f}")
     print(f"  knn_peak_mb={knn_peak_mb:.2f}")

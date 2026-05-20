@@ -117,15 +117,9 @@ __global__ void adaptive_ball_query_kernel(
         }
     }
 
-    if (write_count == 0) {
-        idx[q_idx * nsample] = best_idx;
-        dist2[q_idx * nsample] = best_dist;
-        write_count = 1;
-    }
-
     for (int k = write_count; k < nsample; ++k) {
-        idx[q_idx * nsample + k] = idx[q_idx * nsample + write_count - 1];
-        dist2[q_idx * nsample + k] = dist2[q_idx * nsample + write_count - 1];
+        idx[q_idx * nsample + k] = -1;
+        dist2[q_idx * nsample + k] = 0.0f;
     }
 }
 

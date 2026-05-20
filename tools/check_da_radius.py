@@ -99,7 +99,9 @@ def check_cuda_query():
     radius = torch.linspace(0.16, 0.32, points.shape[0], device="cuda")
     idx, dist = pointops.adaptive_ball_query(16, 0.0, radius, points, offset)
     torch.cuda.synchronize()
-    max_over = (dist > radius.view(-1, 1) + 1e-4).sum().item()
+    valid_idx = idx >= 0
+    max_over = ((dist > radius.view(-1, 1) + 1e-4) & valid_idx).sum().item()
+    shadow_ratio = (~valid_idx).float().mean().item()
 
     brute_counts = []
     cuda_unique_counts = []
@@ -112,7 +114,7 @@ def check_cuda_query():
         local_idx = idx[start:end] - start
         cuda_unique_counts.append(
             torch.tensor(
-                [torch.unique(row).numel() for row in local_idx],
+                [torch.unique(row[row >= 0]).numel() for row in local_idx],
                 dtype=torch.float32,
                 device=points.device,
             )
@@ -145,6 +147,7 @@ def check_cuda_query():
     print(f"  idx_shape={tuple(idx.shape)}")
     print(f"  max_distance={dist.max().item():.4f}")
     print(f"  outside_count={max_over}")
+    print(f"  shadow_ratio={shadow_ratio:.4f}")
     print(f"  brute_count_mean={brute_counts.mean().item():.2f}")
     print(f"  cuda_unique_count_mean={cuda_unique_counts.mean().item():.2f}")
     print(f"  adaptive_ball_query_ms={adaptive_ms:.3f}")

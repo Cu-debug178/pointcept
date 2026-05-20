@@ -16,5 +16,7 @@ model = dict(
         },
         da_radius_strength=0.5,
         da_radius_apply_block_mask=False,
+        da_radius_debug=True,
+        da_radius_debug_interval=100,
     )
 )

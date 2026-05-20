@@ -1,8 +1,10 @@
 import math
+import os
 import torch
 
 from pointcept.models.builder import MODELS
 from pointcept.models.kpconvx.utils.torch_pyramid import build_full_pyramid
+from pointcept.utils.logger import get_root_logger
 
 from .kpx_stage1 import KPConvXStage1
 from .da_kpconvx_block import DensityAdaptiveScale, DensityAdaptiveRadius
@@ -74,6 +76,8 @@ class KPConvXStage2(KPConvXStage1):
         da_radius_power=1.0,
         da_radius_backend="torch",
         da_radius_apply_block_mask=None,
+        da_radius_debug=False,
+        da_radius_debug_interval=100,
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs,
@@ -112,6 +116,14 @@ class KPConvXStage2(KPConvXStage1):
         self.da_radius_power = da_radius_power
         self.da_radius_backend = da_radius_backend
         self.da_radius_apply_block_mask = da_radius_apply_block_mask
+        self.da_radius_debug = bool(da_radius_debug) or self._env_flag(
+            "POINTCEPT_DA_RADIUS_DEBUG"
+        )
+        self.da_radius_debug_interval = self._env_int(
+            "POINTCEPT_DA_RADIUS_DEBUG_INTERVAL",
+            da_radius_debug_interval,
+        )
+        self._da_radius_debug_step = 0
 
         super().__init__(
             input_channels=input_channels,
@@ -137,6 +149,21 @@ class KPConvXStage2(KPConvXStage1):
             strength=da_radius_strength,
             power=da_radius_power,
         )
+
+    @staticmethod
+    def _env_flag(name):
+        value = os.environ.get(name, "")
+        return value.lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _env_int(name, default):
+        value = os.environ.get(name)
+        if value is None:
+            return int(default)
+        try:
+            return int(value)
+        except ValueError:
+            return int(default)
 
     @staticmethod
     def _normalize_stage_ranges(stage_ranges):
@@ -174,6 +201,60 @@ class KPConvXStage2(KPConvXStage1):
         # CUDA backend already changes the neighbor graph with adaptive radius.
         # Applying the block-level mask again over-restricts neighbors.
         return self.da_radius_backend != "cuda"
+
+    @staticmethod
+    def _is_main_process():
+        if not torch.distributed.is_available():
+            return True
+        if not torch.distributed.is_initialized():
+            return True
+        return torch.distributed.get_rank() == 0
+
+    def _should_log_da_radius_debug(self):
+        if not self.da_radius_debug:
+            return False
+        if not self._is_main_process():
+            return False
+        interval = max(int(self.da_radius_debug_interval), 1)
+        return self._da_radius_debug_step % interval == 0
+
+    @torch.no_grad()
+    def _log_da_radius_debug(self, in_dict, radius_scales):
+        if not self._should_log_da_radius_debug():
+            return
+
+        logger = get_root_logger()
+        for layer in self.da_radius_stages:
+            l = int(layer) - 1
+            if l < 0 or l >= len(in_dict.neighbors):
+                continue
+            if l >= len(radius_scales) or radius_scales[l] is None:
+                continue
+
+            neighbors = in_dict.neighbors[l]
+            num_points = in_dict.points[l].shape[0]
+            neighbor_limit = neighbors.shape[1]
+            valid = (neighbors >= 0) & (neighbors < num_points)
+            valid_count = valid.sum(dim=1).float()
+            shadow_ratio = (~valid).float().mean()
+            full_ratio = (valid_count >= neighbor_limit).float().mean()
+            radius_scale = radius_scales[l].detach().reshape(-1).float()
+
+            logger.info(
+                "DA-Radius debug "
+                f"step={self._da_radius_debug_step} "
+                f"stage={layer} "
+                f"points={num_points} "
+                f"limit={neighbor_limit} "
+                f"radius_scale_min={radius_scale.min().item():.4f} "
+                f"radius_scale_mean={radius_scale.mean().item():.4f} "
+                f"radius_scale_max={radius_scale.max().item():.4f} "
+                f"valid_neighbors_min={valid_count.min().item():.2f} "
+                f"valid_neighbors_mean={valid_count.mean().item():.2f} "
+                f"valid_neighbors_max={valid_count.max().item():.2f} "
+                f"shadow_ratio={shadow_ratio.item():.4f} "
+                f"full_ratio={full_ratio.item():.4f}"
+            )
 
     def get_residual_block(
         self,
@@ -306,7 +387,7 @@ class KPConvXStage2(KPConvXStage1):
             else:
                 radius_scales.append(None)
 
-        return build_full_pyramid(
+        cuda_in_dict = build_full_pyramid(
             points,
             lengths,
             self.num_layers,
@@ -320,6 +401,9 @@ class KPConvXStage2(KPConvXStage1):
             da_radius_scales=radius_scales,
             da_radius_backend="cuda",
         )
+        self._log_da_radius_debug(cuda_in_dict, radius_scales)
+        self._da_radius_debug_step += 1
+        return cuda_in_dict
 
     def forward(self, data_dict):
         # ------ Init ------

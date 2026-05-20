@@ -68,6 +68,8 @@ class KPConvXStage1(KPConvXBase):
             "da_radius_power",
             "da_radius_backend",
             "da_radius_apply_block_mask",
+            "da_radius_debug",
+            "da_radius_debug_interval",
         ):
             kwargs.pop(key, None)
 

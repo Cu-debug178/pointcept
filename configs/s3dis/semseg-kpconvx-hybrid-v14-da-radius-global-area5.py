@@ -33,3 +33,12 @@ model = dict(
         da_radius_debug_interval=100,
     )
 )
+
+# Keep the same test-time memory guard as v13.
+data = dict(
+    test=dict(
+        test_cfg=dict(
+            crop=dict(type="TestSphereCrop", point_max=80000),
+        )
+    )
+)

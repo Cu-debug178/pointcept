@@ -20,3 +20,13 @@ model = dict(
         da_radius_debug_interval=100,
     )
 )
+
+# Full-scene precise evaluation can create 300k-400k point fragments after
+# voxelization. Split test fragments to avoid KPConvX influence tensor OOM.
+data = dict(
+    test=dict(
+        test_cfg=dict(
+            crop=dict(type="TestSphereCrop", point_max=80000),
+        )
+    )
+)

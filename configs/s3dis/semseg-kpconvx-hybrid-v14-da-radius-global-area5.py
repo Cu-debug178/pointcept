@@ -38,7 +38,9 @@ model = dict(
 data = dict(
     test=dict(
         test_cfg=dict(
-            crop=dict(type="TestSphereCrop", point_max=80000),
+            # base 配置里 crop=None；改成 TestSphereCrop 时必须删除旧值，
+            # 否则配置合并会出现 NoneType -> dict 的类型冲突。
+            crop=dict(_delete_=True, type="TestSphereCrop", point_max=80000),
         )
     )
 )

@@ -150,10 +150,12 @@ class SGCALite(nn.Module):
         order = torch.argsort(key)
         return order
 
-    def _forward_single_cloud(self, feats, coord):
+    def _context_single_cloud(self, feats, coord):
         n = feats.shape[0]
+        if n == 0:
+            return feats, feats.new_zeros((1, self.dim))
         if n <= 1:
-            return feats
+            return feats, feats.mean(dim=0, keepdim=True)
 
         x = self.in_proj(feats) + self.pos_embed(coord)
         x = self.pre_norm(x)
@@ -174,11 +176,44 @@ class SGCALite(nn.Module):
         x_out = x_out_sorted[inverse]
 
         x_context = self.out_proj(x_out)
-        global_token = x_context.mean(dim=0, keepdim=True).expand(n, -1)
+        global_token = x_context.mean(dim=0, keepdim=True)
+        return x_context, global_token
+
+    def _forward_single_cloud(self, feats, coord):
+        x_context, global_token = self._context_single_cloud(feats, coord)
+        global_token = global_token.expand(feats.shape[0], -1)
         gate = self.global_gate(torch.cat([feats, global_token], dim=-1))
         fused = self.fuse(torch.cat([x_context, global_token], dim=-1))
 
         return feats + self.drop_path(gate * fused)
+
+    def context(self, feats, coord, lengths):
+        """
+        Return one context token per cloud without modifying backbone features.
+        This lets callers use global context as a decoder/head condition instead
+        of injecting it into encoder skip features.
+        """
+        if feats.numel() == 0:
+            return feats.new_zeros((0, self.dim))
+
+        tokens = []
+        start = 0
+
+        for length in lengths.tolist():
+            length = int(length)
+            end = start + length
+
+            feats_b = feats[start:end]
+            coord_b = coord[start:end]
+
+            if length == 0:
+                token = feats.new_zeros((1, self.dim))
+            else:
+                _, token = self._context_single_cloud(feats_b, coord_b)
+            tokens.append(token)
+            start = end
+
+        return torch.cat(tokens, dim=0)
 
     def forward(self, feats, coord, lengths):
         """

@@ -78,6 +78,7 @@ class KPConvXHybrid(KPConvXStage2):
         global_mlp_ratio=2.0,
         global_dropout=0.0,
         global_context_drop_path=0.0,
+        global_context_fusion="encoder",
         enable_da=True,
         use_da_kernel=None,
         da_stages=(2, 3, 4),
@@ -151,6 +152,10 @@ class KPConvXHybrid(KPConvXStage2):
         global_context_drop_path = self.global_cfg.get(
             "context_drop_path", global_context_drop_path
         )
+        global_context_fusion = self.global_cfg.get("fusion", global_context_fusion)
+        global_context_fusion = self.global_cfg.get(
+            "context_fusion", global_context_fusion
+        )
 
         # Fusion config
         # Currently reserved. Router global_weight is used directly.
@@ -181,6 +186,7 @@ class KPConvXHybrid(KPConvXStage2):
             global_mlp_ratio=global_mlp_ratio,
             global_dropout=global_dropout,
             global_context_drop_path=global_context_drop_path,
+            global_context_fusion=global_context_fusion,
             enable_da=enable_da,
             use_da_kernel=use_da_kernel,
             da_stages=da_stages,
@@ -309,6 +315,7 @@ class KPConvXHybrid(KPConvXStage2):
 
         # ------ Encoder ------
         skip_feats = []
+        context_tokens = []
 
         for layer in range(1, self.num_layers + 1):
             l = layer - 1
@@ -350,12 +357,23 @@ class KPConvXHybrid(KPConvXStage2):
                         da_radius_scale=da_radius_scale,
                     )
 
-            router_state = self._route_stage_if_needed(
+            context_token = self._collect_sgca_context_if_needed(
                 stage_idx=layer,
                 feats=feats,
                 points=in_dict.points[l],
-                neighbors=in_dict.neighbors[l],
+                lengths=in_dict.lengths[l],
             )
+            if context_token is not None:
+                context_tokens.append(context_token)
+
+            router_state = None
+            if self.global_context_fusion == "encoder":
+                router_state = self._route_stage_if_needed(
+                    stage_idx=layer,
+                    feats=feats,
+                    points=in_dict.points[l],
+                    neighbors=in_dict.neighbors[l],
+                )
 
             feats = self._apply_global_with_router(
                 stage_idx=layer,
@@ -436,6 +454,11 @@ class KPConvXHybrid(KPConvXStage2):
                 feats=feats,
                 points=in_dict.points[0],
                 neighbors=in_dict.neighbors[0],
+            )
+            feats = self._apply_decoder_global_context(
+                feats=feats,
+                lengths=in_dict.lengths[0],
+                context_tokens=context_tokens,
             )
 
         # ------ Head ------

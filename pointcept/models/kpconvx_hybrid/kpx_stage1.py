@@ -1,5 +1,6 @@
 import math
 import torch
+import torch.nn as nn
 
 from pointcept.models.builder import MODELS
 from pointcept.models.kpconvx.kpconvx_base import KPConvXBase
@@ -42,6 +43,7 @@ class KPConvXStage1(KPConvXBase):
         global_mlp_ratio=2.0,
         global_dropout=0.0,
         global_context_drop_path=0.0,
+        global_context_fusion="encoder",
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs
@@ -100,6 +102,13 @@ class KPConvXStage1(KPConvXBase):
         if global_context_stages is not None:
             global_stages = global_context_stages
 
+        global_context_fusion = str(global_context_fusion).lower()
+        if global_context_fusion not in ("encoder", "decoder"):
+            raise ValueError(
+                "global_context_fusion must be either 'encoder' or 'decoder', "
+                f"got {global_context_fusion}"
+            )
+
         if global_patch_size is not None:
             if isinstance(global_patch_size, int):
                 global_patch_sizes = tuple(global_patch_size for _ in global_stages)
@@ -109,8 +118,10 @@ class KPConvXStage1(KPConvXBase):
         self.global_context_type = global_context_type
         self.global_context_ratio = global_context_ratio
         self.global_context_drop_path = global_context_drop_path
+        self.global_context_fusion = global_context_fusion
         self.enable_global = enable_global
         self.global_stages = tuple(global_stages) if enable_global else tuple()
+        self.global_stage_dims = {}
 
         layer_channels = self._compute_layer_channels(
             init_channels=self._stage1_init_channels,
@@ -127,6 +138,7 @@ class KPConvXStage1(KPConvXBase):
                 dim = layer_channels[stage]
             else:
                 dim = layer_channels[stage - 1]
+            self.global_stage_dims[stage] = dim
             patch_size = global_patch_sizes[min(i, len(global_patch_sizes) - 1)]
             num_heads = self._safe_num_heads(
                 dim=dim,
@@ -147,6 +159,32 @@ class KPConvXStage1(KPConvXBase):
                 ),
             )
 
+        if (
+            self.enable_global
+            and self.global_context_fusion == "decoder"
+            and self.task == "cloud_segmentation"
+        ):
+            decoder_dim = layer_channels[0]
+            self.global_decoder_context_proj = nn.ModuleDict(
+                {
+                    str(stage): nn.Linear(dim, decoder_dim)
+                    for stage, dim in self.global_stage_dims.items()
+                }
+            )
+            self.global_decoder_context_norm = nn.LayerNorm(decoder_dim)
+            self.global_decoder_gate = nn.Sequential(
+                nn.Linear(decoder_dim * 2, decoder_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(decoder_dim, decoder_dim),
+                nn.Sigmoid(),
+            )
+            self.global_decoder_fuse = nn.Sequential(
+                nn.Linear(decoder_dim * 2, decoder_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(decoder_dim, decoder_dim),
+            )
+            self.global_decoder_gamma = nn.Parameter(torch.zeros(1))
+
     @staticmethod
     def _compute_layer_channels(init_channels, channel_scaling, num_layers):
         layer_channels = []
@@ -165,10 +203,52 @@ class KPConvXStage1(KPConvXBase):
     def _apply_sgca_if_needed(self, stage_idx, feats, points, lengths):
         if not self.enable_global:
             return feats
+        if self.global_context_fusion != "encoder":
+            return feats
         if stage_idx not in self.global_stages:
             return feats
         sgca = getattr(self, f"sgca_{stage_idx}")
         return sgca(feats, points, lengths)
+
+    def _collect_sgca_context_if_needed(self, stage_idx, feats, points, lengths):
+        if not self.enable_global:
+            return None
+        if self.global_context_fusion != "decoder":
+            return None
+        if stage_idx not in self.global_stages:
+            return None
+        sgca = getattr(self, f"sgca_{stage_idx}")
+        return stage_idx, sgca.context(feats, points, lengths)
+
+    @staticmethod
+    def _expand_context_to_points(context, lengths):
+        parts = []
+        for token, length in zip(context, lengths.tolist()):
+            parts.append(token.unsqueeze(0).expand(int(length), -1))
+        if not parts:
+            return context.new_zeros((0, context.shape[-1]))
+        return torch.cat(parts, dim=0)
+
+    def _apply_decoder_global_context(self, feats, lengths, context_tokens):
+        if not context_tokens:
+            return feats
+        if self.global_context_fusion != "decoder":
+            return feats
+        if self.task != "cloud_segmentation":
+            return feats
+
+        projected = []
+        for stage_idx, token in context_tokens:
+            projected.append(self.global_decoder_context_proj[str(stage_idx)](token))
+
+        context = torch.stack(projected, dim=0).mean(dim=0)
+        context = self.global_decoder_context_norm(context)
+        point_context = self._expand_context_to_points(context, lengths)
+
+        gate_input = torch.cat([feats, point_context], dim=-1)
+        gate = self.global_decoder_gate(gate_input)
+        fused = self.global_decoder_fuse(gate_input)
+        return feats + self.global_decoder_gamma * gate * fused
 
     def forward(self, data_dict):
         # ------ Init ------
@@ -206,6 +286,7 @@ class KPConvXStage1(KPConvXBase):
 
         # ------ Encoder ------
         skip_feats = []
+        context_tokens = []
         for layer in range(1, self.num_layers + 1):
             l = layer - 1
             block_list = getattr(self, f"encoder_{layer}")
@@ -230,7 +311,16 @@ class KPConvXStage1(KPConvXBase):
                         upcut=upcut,
                     )
 
-            # Stage-1 global context insertion
+            context_token = self._collect_sgca_context_if_needed(
+                stage_idx=layer,
+                feats=feats,
+                points=in_dict.points[l],
+                lengths=in_dict.lengths[l],
+            )
+            if context_token is not None:
+                context_tokens.append(context_token)
+
+            # Stage-1 encoder-mode global context insertion
             feats = self._apply_sgca_if_needed(
                 stage_idx=layer,
                 feats=feats,
@@ -299,6 +389,12 @@ class KPConvXStage1(KPConvXBase):
                             in_dict.neighbors[l],
                             in_dict.lengths[l],
                         )
+
+            feats = self._apply_decoder_global_context(
+                feats=feats,
+                lengths=in_dict.lengths[0],
+                context_tokens=context_tokens,
+            )
 
         # ------ Head ------
         logits = self.head(feats)

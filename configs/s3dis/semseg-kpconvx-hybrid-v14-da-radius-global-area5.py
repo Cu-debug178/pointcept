@@ -1,12 +1,14 @@
 _base_ = ["./semseg-kpconvx-hybrid-v13-da-radius-cuda-only-area5.py"]
 
 # v14: add SGCA global context on top of v13 CUDA DA-Radius.
-# Keep router/refine/DA-kernel disabled for a clean global-attention ablation.
+# SGCA collects high-stage context tokens and fuses them before the head,
+# avoiding direct modification of encoder skip features.
 model = dict(
     backbone=dict(
         enable_global=True,
         use_global_context=True,
         global_context_type="serialized_patch",
+        global_context_fusion="decoder",
         global_stages=(4, 5),
         global_context_stages=(4, 5),
         global_patch_sizes=(192, 320),
@@ -34,12 +36,11 @@ model = dict(
     )
 )
 
-# Keep the same test-time memory guard as v13.
+# Full-scene precise evaluation can create large fragments after voxelization.
+# Split test fragments to avoid KPConvX influence tensor OOM.
 data = dict(
     test=dict(
         test_cfg=dict(
-            # base 配置里 crop=None；改成 TestSphereCrop 时必须删除旧值，
-            # 否则配置合并会出现 NoneType -> dict 的类型冲突。
             crop=dict(_delete_=True, type="TestSphereCrop", point_max=80000),
         )
     )

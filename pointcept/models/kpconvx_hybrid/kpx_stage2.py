@@ -429,6 +429,7 @@ class KPConvXStage2(KPConvXStage1):
 
         # ------ Encoder ------
         skip_feats = []
+        context_tokens = []
 
         for layer in range(1, self.num_layers + 1):
             l = layer - 1
@@ -470,7 +471,16 @@ class KPConvXStage2(KPConvXStage1):
                         da_radius_scale=da_radius_scale,
                     )
 
-            # Global context branch from Stage-1
+            context_token = self._collect_sgca_context_if_needed(
+                stage_idx=layer,
+                feats=feats,
+                points=in_dict.points[l],
+                lengths=in_dict.lengths[l],
+            )
+            if context_token is not None:
+                context_tokens.append(context_token)
+
+            # Encoder-mode global context branch from Stage-1.
             feats = self._apply_sgca_if_needed(
                 stage_idx=layer,
                 feats=feats,
@@ -544,6 +554,12 @@ class KPConvXStage2(KPConvXStage1):
                             in_dict.neighbors[l],
                             in_dict.lengths[l],
                         )
+
+            feats = self._apply_decoder_global_context(
+                feats=feats,
+                lengths=in_dict.lengths[0],
+                context_tokens=context_tokens,
+            )
 
         # ------ Head ------
         logits = self.head(feats)

@@ -67,15 +67,45 @@ class KPConvXHybrid(KPConvXStage2):
         router_temperature=1.0,
         router_global_boost=1.0,
         enable_global=True,
+        use_global_context=None,
+        global_context_type="serialized_patch",
         global_stages=(4, 5),
+        global_context_stages=None,
         global_patch_sizes=(192, 320),
+        global_patch_size=None,
         global_num_heads=(8, 16),
+        global_context_ratio=1.0,
         global_mlp_ratio=2.0,
         global_dropout=0.0,
+        global_context_drop_path=0.0,
+        global_context_fusion="encoder",
+        global_serialization_orders=("linear",),
+        global_serialization_depth=10,
+        global_use_local_stats=False,
+        global_local_stats_dim=0,
+        global_decoder_fusion_type="mean",
+        global_context_max_tokens_per_stage=0,
+        global_cross_attention_heads=4,
+        global_cross_attention_chunk_size=8192,
         enable_da=True,
+        use_da_kernel=None,
         da_stages=(2, 3, 4),
         da_scale_range=(0.5, 2.0),
         da_density_k=16,
+        enable_da_radius=False,
+        use_da_radius=None,
+        da_radius_stages=(2, 3, 4),
+        da_radius_scale_range=(0.8, 1.5),
+        da_radius_stage_ranges=None,
+        da_radius_density_k=16,
+        da_radius_norm="percentile",
+        da_radius_percentile=(10, 90),
+        da_radius_strength=0.75,
+        da_radius_power=1.0,
+        da_radius_backend="torch",
+        da_radius_apply_block_mask=None,
+        da_radius_debug=False,
+        da_radius_debug_interval=100,
         enable_refine=True,
         refine_hidden_ratio=0.5,
         refine_dropout=0.0,
@@ -105,12 +135,62 @@ class KPConvXHybrid(KPConvXStage2):
         router_global_boost = self.router_cfg.get("global_boost", router_global_boost)
 
         # Global config
+        if use_global_context is not None:
+            enable_global = use_global_context
         enable_global = self.global_cfg.get("enable", enable_global)
+        global_context_type = self.global_cfg.get("type", global_context_type)
+        global_context_type = self.global_cfg.get("context_type", global_context_type)
         global_stages = self.global_cfg.get("stages", global_stages)
+        global_stages = self.global_cfg.get("context_stages", global_stages)
+        if global_context_stages is not None:
+            global_stages = global_context_stages
         global_patch_sizes = self.global_cfg.get("patch_sizes", global_patch_sizes)
+        global_patch_size = self.global_cfg.get("patch_size", global_patch_size)
+        if global_patch_size is not None:
+            if isinstance(global_patch_size, int):
+                global_patch_sizes = tuple(global_patch_size for _ in global_stages)
+            else:
+                global_patch_sizes = tuple(global_patch_size)
         global_num_heads = self.global_cfg.get("num_heads", global_num_heads)
+        global_context_ratio = self.global_cfg.get("context_ratio", global_context_ratio)
+        global_context_ratio = self.global_cfg.get("ratio", global_context_ratio)
         global_mlp_ratio = self.global_cfg.get("mlp_ratio", global_mlp_ratio)
         global_dropout = self.global_cfg.get("dropout", global_dropout)
+        global_context_drop_path = self.global_cfg.get("drop_path", global_context_drop_path)
+        global_context_drop_path = self.global_cfg.get(
+            "context_drop_path", global_context_drop_path
+        )
+        global_context_fusion = self.global_cfg.get("fusion", global_context_fusion)
+        global_context_fusion = self.global_cfg.get(
+            "context_fusion", global_context_fusion
+        )
+        global_serialization_orders = self.global_cfg.get(
+            "serialization_orders", global_serialization_orders
+        )
+        global_serialization_depth = self.global_cfg.get(
+            "serialization_depth", global_serialization_depth
+        )
+        global_use_local_stats = self.global_cfg.get(
+            "use_local_stats", global_use_local_stats
+        )
+        global_local_stats_dim = self.global_cfg.get(
+            "local_stats_dim", global_local_stats_dim
+        )
+        global_decoder_fusion_type = self.global_cfg.get(
+            "decoder_fusion_type", global_decoder_fusion_type
+        )
+        global_decoder_fusion_type = self.global_cfg.get(
+            "fusion_type", global_decoder_fusion_type
+        )
+        global_context_max_tokens_per_stage = self.global_cfg.get(
+            "max_tokens_per_stage", global_context_max_tokens_per_stage
+        )
+        global_cross_attention_heads = self.global_cfg.get(
+            "cross_attention_heads", global_cross_attention_heads
+        )
+        global_cross_attention_chunk_size = self.global_cfg.get(
+            "cross_attention_chunk_size", global_cross_attention_chunk_size
+        )
 
         # Fusion config
         # Currently reserved. Router global_weight is used directly.
@@ -133,15 +213,42 @@ class KPConvXHybrid(KPConvXStage2):
             input_channels=input_channels,
             num_classes=num_classes,
             enable_global=enable_global,
+            global_context_type=global_context_type,
             global_stages=global_stages,
             global_patch_sizes=global_patch_sizes,
             global_num_heads=global_num_heads,
+            global_context_ratio=global_context_ratio,
             global_mlp_ratio=global_mlp_ratio,
             global_dropout=global_dropout,
+            global_context_drop_path=global_context_drop_path,
+            global_context_fusion=global_context_fusion,
+            global_serialization_orders=global_serialization_orders,
+            global_serialization_depth=global_serialization_depth,
+            global_use_local_stats=global_use_local_stats,
+            global_local_stats_dim=global_local_stats_dim,
+            global_decoder_fusion_type=global_decoder_fusion_type,
+            global_context_max_tokens_per_stage=global_context_max_tokens_per_stage,
+            global_cross_attention_heads=global_cross_attention_heads,
+            global_cross_attention_chunk_size=global_cross_attention_chunk_size,
             enable_da=enable_da,
+            use_da_kernel=use_da_kernel,
             da_stages=da_stages,
             da_scale_range=da_scale_range,
             da_density_k=da_density_k,
+            enable_da_radius=enable_da_radius,
+            use_da_radius=use_da_radius,
+            da_radius_stages=da_radius_stages,
+            da_radius_scale_range=da_radius_scale_range,
+            da_radius_stage_ranges=da_radius_stage_ranges,
+            da_radius_density_k=da_radius_density_k,
+            da_radius_norm=da_radius_norm,
+            da_radius_percentile=da_radius_percentile,
+            da_radius_strength=da_radius_strength,
+            da_radius_power=da_radius_power,
+            da_radius_backend=da_radius_backend,
+            da_radius_apply_block_mask=da_radius_apply_block_mask,
+            da_radius_debug=da_radius_debug,
+            da_radius_debug_interval=da_radius_debug_interval,
             init_channels=init_channels,
             channel_scaling=channel_scaling,
             **kwargs,
@@ -239,18 +346,7 @@ class KPConvXHybrid(KPConvXStage2):
         )
         lengths = offset[1:] - offset[:-1]
 
-        in_dict = build_full_pyramid(
-            points,
-            lengths,
-            self.num_layers,
-            self.subsample_size,
-            self.first_radius,
-            self.radius_scaling,
-            self.neighbor_limits,
-            self.upsample_n,
-            sub_mode=self.in_sub_mode,
-            grid_pool_mode=self.grid_pool,
-        )
+        in_dict = self._build_pyramid(points, lengths)
 
         # ------ Stem ------
         feats = self.stem(
@@ -262,6 +358,7 @@ class KPConvXHybrid(KPConvXStage2):
 
         # ------ Encoder ------
         skip_feats = []
+        context_tokens = []
 
         for layer in range(1, self.num_layers + 1):
             l = layer - 1
@@ -283,6 +380,12 @@ class KPConvXHybrid(KPConvXStage2):
                     neighbors=in_dict.neighbors[l],
                     lengths=in_dict.lengths[l],
                 )
+                da_radius_scale = self._get_da_radius_scale_if_needed(
+                    stage_idx=layer,
+                    points=in_dict.points[l],
+                    neighbors=in_dict.neighbors[l],
+                    lengths=in_dict.lengths[l],
+                )
 
                 upcut = None
                 for block in block_list:
@@ -294,14 +397,26 @@ class KPConvXHybrid(KPConvXStage2):
                         in_dict.lengths[l],
                         upcut=upcut,
                         da_scale=da_scale,
+                        da_radius_scale=da_radius_scale,
                     )
 
-            router_state = self._route_stage_if_needed(
+            context_token = self._collect_sgca_context_if_needed(
                 stage_idx=layer,
                 feats=feats,
                 points=in_dict.points[l],
-                neighbors=in_dict.neighbors[l],
+                lengths=in_dict.lengths[l],
             )
+            if context_token is not None:
+                context_tokens.append(context_token)
+
+            router_state = None
+            if self.global_context_fusion == "encoder":
+                router_state = self._route_stage_if_needed(
+                    stage_idx=layer,
+                    feats=feats,
+                    points=in_dict.points[l],
+                    neighbors=in_dict.neighbors[l],
+                )
 
             feats = self._apply_global_with_router(
                 stage_idx=layer,
@@ -382,6 +497,12 @@ class KPConvXHybrid(KPConvXStage2):
                 feats=feats,
                 points=in_dict.points[0],
                 neighbors=in_dict.neighbors[0],
+            )
+            feats = self._apply_decoder_global_context(
+                feats=feats,
+                lengths=in_dict.lengths[0],
+                context_tokens=context_tokens,
+                local_stats=self._last_da_radius_local_stats,
             )
 
         # ------ Head ------

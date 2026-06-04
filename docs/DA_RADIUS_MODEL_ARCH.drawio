@@ -1,0 +1,154 @@
+<mxfile host="app.diagrams.net" modified="2026-05-19T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="da-radius-local-global-kpconvx" name="DA-Radius Local-Global KPConvX">
+    <mxGraphModel dx="2200" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1250" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="bg" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0d1117;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2200" height="1250" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="Density-Adaptive Local-Global KPConvX 总体框架" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#ffffff;fontStyle=1;fontSize=34;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="520" y="25" width="1160" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="主干保持 KPConvX Encoder-Decoder；DA-Radius 在邻域构建阶段改变 effective receptive field；SGCA / serialized patch context 提供高层全局上下文" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#c9d1d9;fontSize=17;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="420" y="75" width="1360" height="32" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="input_cloud" value="输入点云&#xa;coord / feat / offset" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#111318;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="135" width="210" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="pyramid" value="构建金字塔 / 邻域&#xa;build_full_pyramid&#xa;points / lengths / neighbors&#xa;&#xa;CUDA backend:&#xa;adaptive_ball_query(radius_i)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#121821;strokeColor=#58a6ff;strokeWidth=2;fontColor=#ffffff;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="40" y="315" width="250" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="stem" value="Stem&#xa;KPConvX 起始卷积" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#2d2400;strokeColor=#d29922;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="335" y="390" width="125" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="enc1" value="Enc Stage 1&#xa;KPConvX Block&#xa;N0, C=64&#xa;local geometry" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#1f293b;strokeColor=#79a7ff;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="505" y="385" width="150" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool1" value="Grid Maxpool / 下采样&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#151515;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="690" y="405" width="95" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc2" value="Enc Stage 2&#xa;DA-KPConvX&#xa;N1=N0/2&#xa;C≈96" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#1f293b;strokeColor=#79a7ff;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="385" width="150" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool2" value="Grid Maxpool / 下采样&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#151515;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1005" y="405" width="95" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc3" value="Enc Stage 3&#xa;DA-KPConvX&#xa;N2=N0/4&#xa;C≈128" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#1f293b;strokeColor=#79a7ff;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1135" y="385" width="150" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool3" value="Grid Maxpool / 下采样&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#151515;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="405" width="95" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc4" value="Enc Stage 4&#xa;DA-KPConvX + Global&#xa;N3=N0/8&#xa;C≈192" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#1f293b;strokeColor=#79a7ff;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="385" width="170" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="pool4" value="Grid Maxpool / 下采样&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#151515;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1655" y="405" width="95" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc5" value="Enc Stage 5&#xa;Bottleneck + Global&#xa;N4=N0/16&#xa;C≈256" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#1f293b;strokeColor=#79a7ff;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1785" y="385" width="170" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="da_radius" value="DA-Radius&#xa;DensityAdaptiveRadius&#xa;&#xa;density_i = 1 / mean_dist_i&#xa;radius_scale_i = f(density_i)&#xa;radius_i = base_radius_stage × scale_i&#xa;&#xa;backend: cuda / torch" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#361b00;strokeColor=#f0883e;strokeWidth=2;fontColor=#ffffff;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="735" y="555" width="250" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="cuda_query" value="CUDA Adaptive Ball Query&#xa;pointops.adaptive_ball_query&#xa;&#xa;直接按 per-query radius_i 搜索&#xa;不是大半径候选后 mask&#xa;neighbor_limits = nsample cap" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#002b36;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="555" width="270" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="da_kernel" value="DA-Kernel Ablation&#xa;DensityAdaptiveScale&#xa;&#xa;只改变 kernel point / influence scale&#xa;不改变 neighbor set&#xa;保留为消融项" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#2b1745;strokeColor=#bc8cff;strokeWidth=2;fontColor=#ffffff;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="425" y="555" width="245" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="global_context" value="SGCA / Serialized Patch Context&#xa;PTv3-style Global Context&#xa;&#xa;global_context_stages=(4,5)&#xa;patch_size=256/320/512&#xa;补充 long-range dependency" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#173300;strokeColor=#7ee787;strokeWidth=2;fontColor=#ffffff;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="555" width="280" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="router" value="Geometry Router&#xa;可选插件&#xa;&#xa;输出 global_weight&#xa;控制 global context fusion" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#2b1a3a;strokeColor=#d2a8ff;strokeWidth=2;fontColor=#ffffff;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1785" y="555" width="210" height="125" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="dec4" value="Dec Stage 4&#xa;Up + Skip + Unary&#xa;可选解码块" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#072c2c;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="155" width="165" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="up4" value="Grid Up&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;dashed=1;dashPattern=8 8;fillColor=#101820;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="170" width="75" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec3" value="Dec Stage 3&#xa;Up + Skip + Unary&#xa;可选解码块" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#072c2c;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="155" width="165" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="up3" value="Grid Up&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;dashed=1;dashPattern=8 8;fillColor=#101820;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="170" width="75" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec2" value="Dec Stage 2&#xa;Up + Skip + Unary&#xa;可选解码块" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#072c2c;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="910" y="155" width="165" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="up2" value="Grid Up&#xa;x2" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;dashed=1;dashPattern=8 8;fillColor=#101820;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="810" y="170" width="75" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec1" value="Dec Stage 1&#xa;Up + Skip + Unary&#xa;可选解码块" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#072c2c;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="590" y="155" width="165" height="85" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="refine" value="Refine Head&#xa;残差注入&#xa;coords + boundary cue" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#072c2c;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1985" y="285" width="150" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="seg_head" value="Segmentation Head&#xa;分类头" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#072c2c;strokeColor=#56d4dd;strokeWidth=2;fontColor=#ffffff;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1985" y="415" width="150" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="output" value="输出 logits&#xa;类别预测" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#111318;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1985" y="545" width="150" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="enc_detail" value="A) Encoder Block 简化&#xa;&#xa;x → KPConvX / DA-KPConvX → Norm + Act → + Shortcut → y&#xa;&#xa;DA-Radius: 先改变 neighbors；DA-Kernel: 改变 kernel influence；两者独立消融。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;dashed=1;dashPattern=6 6;fillColor=#0d1117;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=15;align=left;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="55" y="800" width="620" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="dec_detail" value="B) Decoder Block 简化&#xa;&#xa;Up → Concat(skip) → Unary / KPConvX → + Shortcut → y&#xa;&#xa;Decoder 主要保持原 KPConvX 结构，避免过多改动影响稳定性。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;dashed=1;dashPattern=6 6;fillColor=#0d1117;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=15;align=left;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="720" y="800" width="620" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="paper_note" value="核心论文表述&#xa;&#xa;Kernel point scaling changes local weighting,&#xa;while DA-Radius changes the effective receptive field&#xa;at neighborhood construction time.&#xa;&#xa;Local DA-Radius + Serialized Global Context = paper-level 主线" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;dashed=1;dashPattern=8 6;fillColor=#17100a;strokeColor=#f0883e;strokeWidth=2;fontColor=#ffffff;fontSize=15;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1420" y="790" width="420" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="图例&#xa;&#xa;蓝色：KPConvX 主干 / Encoder&#xa;青色：Decoder / Output&#xa;橙色：DA-Radius / CUDA search&#xa;紫色：DA-Kernel / Router&#xa;绿色：Global Context&#xa;虚线：Skip / 可选路径" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#111318;strokeColor=#8b949e;strokeWidth=2;fontColor=#ffffff;fontSize=14;align=left;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="1880" y="755" width="250" height="210" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_input_pyramid" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="input_cloud" target="pyramid"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pyramid_stem" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="pyramid" target="stem"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_stem_enc1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="stem" target="enc1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc1_pool1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="enc1" target="pool1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool1_enc2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="pool1" target="enc2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc2_pool2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="enc2" target="pool2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool2_enc3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="pool2" target="enc3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc3_pool3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="enc3" target="pool3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool3_enc4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="pool3" target="enc4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_enc4_pool4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="enc4" target="pool4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_pool4_enc5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="pool4" target="enc5"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="e_enc5_up4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="enc5" target="up4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_up4_dec4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="up4" target="dec4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec4_up3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="dec4" target="up3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_up3_dec3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="up3" target="dec3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec3_up2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="dec3" target="up2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_up2_dec2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="up2" target="dec2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec2_dec1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="dec2" target="dec1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_dec1_refine" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="dec1" target="refine"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_refine_seg" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="refine" target="seg_head"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_seg_output" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#ffffff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="seg_head" target="output"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="e_skip1" value="Skip" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;fontColor=#56d4dd;" edge="1" parent="1" source="enc1" target="dec1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_skip2" value="Skip" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;fontColor=#56d4dd;" edge="1" parent="1" source="enc2" target="dec2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_skip3" value="Skip" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;fontColor=#56d4dd;" edge="1" parent="1" source="enc3" target="dec3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_skip4" value="Skip" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#56d4dd;strokeWidth=2;endArrow=block;endFill=1;fontColor=#56d4dd;" edge="1" parent="1" source="enc4" target="dec4"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="e_da_kernel_enc2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#bc8cff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="da_kernel" target="enc2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_da_kernel_enc3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#bc8cff;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="da_kernel" target="enc3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_da_radius_cuda" value="radius_scale" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#f0883e;strokeWidth=2;endArrow=block;endFill=1;fontColor=#f0883e;" edge="1" parent="1" source="da_radius" target="cuda_query"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_cuda_pyramid" value="neighbors" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#f0883e;strokeWidth=2;endArrow=block;endFill=1;fontColor=#f0883e;" edge="1" parent="1" source="cuda_query" target="pyramid"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_global_enc4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#7ee787;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="global_context" target="enc4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_global_enc5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#7ee787;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="global_context" target="enc5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_router_global" value="global_weight" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=6 6;strokeColor=#d2a8ff;strokeWidth=2;endArrow=block;endFill=1;fontColor=#d2a8ff;" edge="1" parent="1" source="router" target="global_context"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

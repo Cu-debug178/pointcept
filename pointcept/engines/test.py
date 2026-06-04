@@ -7,6 +7,7 @@ Please cite our work if the code is helpful to you.
 
 import json
 from uuid import uuid4
+import gc
 import os
 import time
 import numpy as np
@@ -115,15 +116,25 @@ class TesterBase:
         #     collate_fn=self.__class__.collate_fn,
         # )
 
-        test_loader = torch.utils.data.DataLoader(
-            test_dataset,
+        test_num_workers = getattr(self.cfg, "num_worker_test_per_gpu", None)
+        if test_num_workers is None:
+            test_num_workers = getattr(self.cfg, "num_worker_test", 0)
+            test_num_workers = test_num_workers // comm.get_world_size()
+
+        loader_kwargs = dict(
+            dataset=test_dataset,
             batch_size=self.cfg.batch_size_test_per_gpu,
             shuffle=False,
-            num_workers=self.cfg.batch_size_test_per_gpu,
-            pin_memory=True,
+            num_workers=test_num_workers,
+            pin_memory=test_num_workers > 0,
             sampler=test_sampler,
             collate_fn=self.__class__.collate_fn,
         )
+        if test_num_workers > 0:
+            loader_kwargs["persistent_workers"] = False
+            loader_kwargs["prefetch_factor"] = 1
+
+        test_loader = torch.utils.data.DataLoader(**loader_kwargs)
         return test_loader
 
     def test(self):
@@ -367,6 +378,10 @@ class SemSegTester(TesterBase):
                     m_iou=m_iou,
                 )
             )
+            del pred, segment, fragment_list, data_dict
+            gc.collect()
+            if self.cfg.empty_cache:
+                torch.cuda.empty_cache()
 
         logger.info("Syncing ...")
         comm.synchronize()

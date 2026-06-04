@@ -124,6 +124,7 @@ class KPConvXStage2(KPConvXStage1):
             da_radius_debug_interval,
         )
         self._da_radius_debug_step = 0
+        self._last_da_radius_local_stats = None
 
         super().__init__(
             input_channels=input_channels,
@@ -256,6 +257,69 @@ class KPConvXStage2(KPConvXStage1):
                 f"full_ratio={full_ratio.item():.4f}"
             )
 
+    @torch.no_grad()
+    def _collect_da_radius_local_stats(self, in_dict, radius_scales):
+        if not getattr(self, "global_use_local_stats", False):
+            return None
+        if int(getattr(self, "global_local_stats_dim", 0)) <= 0:
+            return None
+
+        # 为 decoder gate 收集每个 cloud 的局部几何状态。
+        # 每个选中 stage 提供 4 个统计量：
+        # radius_scale_mean, valid_ratio_mean, shadow_ratio_mean, full_ratio_mean。
+        # 它们只作为全局融合的条件信号，不参与梯度更新。
+        stage_stats = []
+        for layer in self.da_radius_stages:
+            l = int(layer) - 1
+            if l < 0 or l >= len(in_dict.neighbors):
+                continue
+            if l >= len(radius_scales) or radius_scales[l] is None:
+                continue
+
+            neighbors = in_dict.neighbors[l]
+            num_points = in_dict.points[l].shape[0]
+            neighbor_limit = max(int(neighbors.shape[1]), 1)
+            valid = (neighbors >= 0) & (neighbors < num_points)
+            valid_count = valid.sum(dim=1).float()
+            valid_ratio = valid_count / float(neighbor_limit)
+            shadow_ratio = 1.0 - valid_ratio
+            full_ratio = (valid_count >= neighbor_limit).float()
+            radius_scale = radius_scales[l].detach().reshape(-1).float()
+
+            per_cloud = []
+            start = 0
+            for length in in_dict.lengths[l].tolist():
+                end = start + int(length)
+                if end <= start:
+                    per_cloud.append(radius_scale.new_zeros((4,)))
+                else:
+                    per_cloud.append(
+                        torch.stack(
+                            [
+                                radius_scale[start:end].mean(),
+                                valid_ratio[start:end].mean(),
+                                shadow_ratio[start:end].mean(),
+                                full_ratio[start:end].mean(),
+                            ],
+                            dim=0,
+                        )
+                    )
+                start = end
+            if per_cloud:
+                stage_stats.append(torch.stack(per_cloud, dim=0))
+
+        if not stage_stats:
+            return None
+
+        stats = torch.cat(stage_stats, dim=1)
+        target_dim = int(self.global_local_stats_dim)
+        if stats.shape[1] < target_dim:
+            pad = stats.new_zeros((stats.shape[0], target_dim - stats.shape[1]))
+            stats = torch.cat([stats, pad], dim=1)
+        elif stats.shape[1] > target_dim:
+            stats = stats[:, :target_dim]
+        return stats
+
     def get_residual_block(
         self,
         in_C,
@@ -352,6 +416,7 @@ class KPConvXStage2(KPConvXStage1):
         )
 
     def _build_pyramid(self, points, lengths):
+        self._last_da_radius_local_stats = None
         in_dict = build_full_pyramid(
             points,
             lengths,
@@ -402,6 +467,9 @@ class KPConvXStage2(KPConvXStage1):
             da_radius_backend="cuda",
         )
         self._log_da_radius_debug(cuda_in_dict, radius_scales)
+        self._last_da_radius_local_stats = self._collect_da_radius_local_stats(
+            cuda_in_dict, radius_scales
+        )
         self._da_radius_debug_step += 1
         return cuda_in_dict
 
@@ -559,6 +627,7 @@ class KPConvXStage2(KPConvXStage1):
                 feats=feats,
                 lengths=in_dict.lengths[0],
                 context_tokens=context_tokens,
+                local_stats=self._last_da_radius_local_stats,
             )
 
         # ------ Head ------

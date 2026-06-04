@@ -79,6 +79,14 @@ class KPConvXHybrid(KPConvXStage2):
         global_dropout=0.0,
         global_context_drop_path=0.0,
         global_context_fusion="encoder",
+        global_serialization_orders=("linear",),
+        global_serialization_depth=10,
+        global_use_local_stats=False,
+        global_local_stats_dim=0,
+        global_decoder_fusion_type="mean",
+        global_context_max_tokens_per_stage=0,
+        global_cross_attention_heads=4,
+        global_cross_attention_chunk_size=8192,
         enable_da=True,
         use_da_kernel=None,
         da_stages=(2, 3, 4),
@@ -156,6 +164,33 @@ class KPConvXHybrid(KPConvXStage2):
         global_context_fusion = self.global_cfg.get(
             "context_fusion", global_context_fusion
         )
+        global_serialization_orders = self.global_cfg.get(
+            "serialization_orders", global_serialization_orders
+        )
+        global_serialization_depth = self.global_cfg.get(
+            "serialization_depth", global_serialization_depth
+        )
+        global_use_local_stats = self.global_cfg.get(
+            "use_local_stats", global_use_local_stats
+        )
+        global_local_stats_dim = self.global_cfg.get(
+            "local_stats_dim", global_local_stats_dim
+        )
+        global_decoder_fusion_type = self.global_cfg.get(
+            "decoder_fusion_type", global_decoder_fusion_type
+        )
+        global_decoder_fusion_type = self.global_cfg.get(
+            "fusion_type", global_decoder_fusion_type
+        )
+        global_context_max_tokens_per_stage = self.global_cfg.get(
+            "max_tokens_per_stage", global_context_max_tokens_per_stage
+        )
+        global_cross_attention_heads = self.global_cfg.get(
+            "cross_attention_heads", global_cross_attention_heads
+        )
+        global_cross_attention_chunk_size = self.global_cfg.get(
+            "cross_attention_chunk_size", global_cross_attention_chunk_size
+        )
 
         # Fusion config
         # Currently reserved. Router global_weight is used directly.
@@ -187,6 +222,14 @@ class KPConvXHybrid(KPConvXStage2):
             global_dropout=global_dropout,
             global_context_drop_path=global_context_drop_path,
             global_context_fusion=global_context_fusion,
+            global_serialization_orders=global_serialization_orders,
+            global_serialization_depth=global_serialization_depth,
+            global_use_local_stats=global_use_local_stats,
+            global_local_stats_dim=global_local_stats_dim,
+            global_decoder_fusion_type=global_decoder_fusion_type,
+            global_context_max_tokens_per_stage=global_context_max_tokens_per_stage,
+            global_cross_attention_heads=global_cross_attention_heads,
+            global_cross_attention_chunk_size=global_cross_attention_chunk_size,
             enable_da=enable_da,
             use_da_kernel=use_da_kernel,
             da_stages=da_stages,
@@ -459,6 +502,7 @@ class KPConvXHybrid(KPConvXStage2):
                 feats=feats,
                 lengths=in_dict.lengths[0],
                 context_tokens=context_tokens,
+                local_stats=self._last_da_radius_local_stats,
             )
 
         # ------ Head ------

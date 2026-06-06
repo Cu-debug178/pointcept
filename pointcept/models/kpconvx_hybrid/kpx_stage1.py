@@ -52,6 +52,9 @@ class KPConvXStage1(KPConvXBase):
         global_context_max_tokens_per_stage=0,
         global_cross_attention_heads=4,
         global_cross_attention_chunk_size=8192,
+        global_boundary_gate=False,
+        global_boundary_min_keep=0.10,
+        global_boundary_detach=True,
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs
@@ -155,6 +158,9 @@ class KPConvXStage1(KPConvXBase):
             )
         self.global_context_max_tokens_per_stage = global_context_max_tokens_per_stage
         self.global_cross_attention_chunk_size = int(global_cross_attention_chunk_size)
+        self.global_boundary_gate = bool(global_boundary_gate)
+        self.global_boundary_min_keep = float(global_boundary_min_keep)
+        self.global_boundary_detach = bool(global_boundary_detach)
         self.enable_global = enable_global
         self.global_stages = tuple(global_stages) if enable_global else tuple()
         self.global_stage_dims = {}
@@ -323,7 +329,14 @@ class KPConvXStage1(KPConvXBase):
             return context.new_zeros((0, context.shape[-1]))
         return torch.cat(parts, dim=0)
 
-    def _fuse_decoder_context(self, feats, lengths, point_context, local_stats=None):
+    def _fuse_decoder_context(
+        self,
+        feats,
+        lengths,
+        point_context,
+        local_stats=None,
+        boundary_risk=None,
+    ):
         gate_parts = [feats, point_context]
         if (
             self.global_use_local_stats
@@ -343,7 +356,19 @@ class KPConvXStage1(KPConvXBase):
         gate_input = torch.cat(gate_parts, dim=-1)
         gate = self.global_decoder_gate(gate_input)
         fused = self.global_decoder_fuse(gate_input)
-        return feats + self.global_decoder_gamma * gate * fused
+        residual = self.global_decoder_gamma * gate * fused
+
+        if self.global_boundary_gate and boundary_risk is not None:
+            if boundary_risk.dim() == 1:
+                boundary_risk = boundary_risk.unsqueeze(-1)
+            if self.global_boundary_detach:
+                boundary_risk = boundary_risk.detach()
+            boundary_risk = boundary_risk.to(dtype=residual.dtype).clamp(0.0, 1.0)
+            min_keep = max(0.0, min(float(self.global_boundary_min_keep), 1.0))
+            keep = min_keep + (1.0 - min_keep) * (1.0 - boundary_risk)
+            residual = residual * keep
+
+        return feats + residual
 
     @staticmethod
     def _context_item_stage(item):
@@ -358,7 +383,7 @@ class KPConvXStage1(KPConvXBase):
         return item[1]
 
     def _apply_decoder_mean_context(
-        self, feats, lengths, context_tokens, local_stats=None
+        self, feats, lengths, context_tokens, local_stats=None, boundary_risk=None
     ):
         projected = []
         for item in context_tokens:
@@ -374,6 +399,7 @@ class KPConvXStage1(KPConvXBase):
             lengths=lengths,
             point_context=point_context,
             local_stats=local_stats,
+            boundary_risk=boundary_risk,
         )
 
     @staticmethod
@@ -387,7 +413,7 @@ class KPConvXStage1(KPConvXBase):
         return parts
 
     def _apply_decoder_token_bank_context(
-        self, feats, lengths, context_tokens, local_stats=None
+        self, feats, lengths, context_tokens, local_stats=None, boundary_risk=None
     ):
         stage_banks = []
         for item in context_tokens:
@@ -397,6 +423,7 @@ class KPConvXStage1(KPConvXBase):
                     lengths=lengths,
                     context_tokens=context_tokens,
                     local_stats=local_stats,
+                    boundary_risk=boundary_risk,
                 )
 
             stage_idx = item["stage_idx"]
@@ -444,10 +471,11 @@ class KPConvXStage1(KPConvXBase):
             lengths=lengths,
             point_context=point_context,
             local_stats=local_stats,
+            boundary_risk=boundary_risk,
         )
 
     def _apply_decoder_global_context(
-        self, feats, lengths, context_tokens, local_stats=None
+        self, feats, lengths, context_tokens, local_stats=None, boundary_risk=None
     ):
         if not context_tokens:
             return feats
@@ -462,6 +490,7 @@ class KPConvXStage1(KPConvXBase):
                 lengths=lengths,
                 context_tokens=context_tokens,
                 local_stats=local_stats,
+                boundary_risk=boundary_risk,
             )
 
         return self._apply_decoder_mean_context(
@@ -469,6 +498,7 @@ class KPConvXStage1(KPConvXBase):
             lengths=lengths,
             context_tokens=context_tokens,
             local_stats=local_stats,
+            boundary_risk=boundary_risk,
         )
 
     def forward(self, data_dict):

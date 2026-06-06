@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch_scatter
 import torch_cluster
 from peft import LoraConfig, get_peft_model
@@ -18,17 +19,60 @@ class DefaultSegmentor(nn.Module):
         self.backbone = build_model(backbone)
         self.criteria = build_criteria(criteria)
 
+    @staticmethod
+    def _unpack_backbone_output(backbone_output):
+        if isinstance(backbone_output, dict):
+            return backbone_output["seg_logits"], backbone_output
+        return backbone_output, None
+
+    @staticmethod
+    def _boundary_aux_loss(aux_dict):
+        if not aux_dict:
+            return None, None
+
+        boundary_logits = aux_dict.get("boundary_logits")
+        boundary_target = aux_dict.get("boundary_target")
+        if boundary_logits is None or boundary_target is None:
+            return None, None
+
+        valid_mask = aux_dict.get("boundary_valid_mask")
+        pred = boundary_logits.reshape(-1).float()
+        target = boundary_target.reshape(-1).float()
+        if valid_mask is None:
+            valid_mask = torch.ones_like(target, dtype=torch.bool)
+        else:
+            valid_mask = valid_mask.reshape(-1).bool()
+
+        if valid_mask.sum() == 0:
+            zero = pred.sum() * 0.0
+            return zero, zero
+
+        pred = pred[valid_mask]
+        target = target[valid_mask]
+        bce = F.binary_cross_entropy_with_logits(pred, target)
+        prob = torch.sigmoid(pred)
+        dice = 1.0 - (
+            2.0 * (prob * target).sum() + 1.0
+        ) / (prob.pow(2).sum() + target.pow(2).sum() + 1.0)
+        raw_loss = bce + dice
+        weight = float(aux_dict.get("boundary_loss_weight", 1.0))
+        return raw_loss * weight, target.mean()
+
     def forward(self, input_dict):
         if "condition" in input_dict.keys():
             # PPT (https://arxiv.org/abs/2308.09718)
             # currently, only support one batch one condition
             input_dict["condition"] = input_dict["condition"][0]
 
-        seg_logits = self.backbone(input_dict)
+        backbone_output = self.backbone(input_dict)
+        seg_logits, aux_dict = self._unpack_backbone_output(backbone_output)
 
         # train
         if self.training:
             loss = self.criteria(seg_logits, input_dict["segment"])
+            boundary_loss, boundary_pos_ratio = self._boundary_aux_loss(aux_dict)
+            if boundary_loss is not None:
+                loss = loss + boundary_loss
 
             # ===== Added: return seg_logits during training for train metrics =====
             # 功能说明：
@@ -47,12 +91,23 @@ class DefaultSegmentor(nn.Module):
             # 1. 指标计算不需要反向传播；
             # 2. 避免日志或 metric 计算保留计算图；
             # 3. 降低显存占用风险。
-            return dict(loss=loss, seg_logits=seg_logits.detach())
+            return_dict = dict(loss=loss, seg_logits=seg_logits.detach())
+            if boundary_loss is not None:
+                return_dict["boundary_loss"] = boundary_loss.detach()
+                return_dict["boundary_pos_ratio"] = boundary_pos_ratio.detach()
+            return return_dict
 
         # eval
         elif "segment" in input_dict.keys():
             loss = self.criteria(seg_logits, input_dict["segment"])
-            return dict(loss=loss, seg_logits=seg_logits)
+            boundary_loss, boundary_pos_ratio = self._boundary_aux_loss(aux_dict)
+            if boundary_loss is not None:
+                loss = loss + boundary_loss
+            return_dict = dict(loss=loss, seg_logits=seg_logits)
+            if boundary_loss is not None:
+                return_dict["boundary_loss"] = boundary_loss
+                return_dict["boundary_pos_ratio"] = boundary_pos_ratio
+            return return_dict
 
         # test
         else:

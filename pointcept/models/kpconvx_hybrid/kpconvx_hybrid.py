@@ -4,6 +4,7 @@ import torch
 from pointcept.models.builder import MODELS
 from pointcept.models.kpconvx.utils.torch_pyramid import build_full_pyramid
 
+from .boundary_gate import BoundaryRiskHead
 from .decoder_refine import DecoderRefineHead
 from .geometry_router import GeometryDifficultyRouter
 from .kpx_stage2 import KPConvXStage2
@@ -87,6 +88,9 @@ class KPConvXHybrid(KPConvXStage2):
         global_context_max_tokens_per_stage=0,
         global_cross_attention_heads=4,
         global_cross_attention_chunk_size=8192,
+        global_boundary_gate=False,
+        global_boundary_min_keep=0.10,
+        global_boundary_detach=True,
         enable_da=True,
         use_da_kernel=None,
         da_stages=(2, 3, 4),
@@ -111,6 +115,11 @@ class KPConvXHybrid(KPConvXStage2):
         refine_dropout=0.0,
         refine_use_coords=True,
         refine_use_boundary=True,
+        boundary_hidden_ratio=0.5,
+        boundary_dropout=0.0,
+        boundary_loss_weight=0.0,
+        boundary_ignore_index=-1,
+        boundary_dilate_steps=1,
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs,
@@ -191,6 +200,15 @@ class KPConvXHybrid(KPConvXStage2):
         global_cross_attention_chunk_size = self.global_cfg.get(
             "cross_attention_chunk_size", global_cross_attention_chunk_size
         )
+        global_boundary_gate = self.global_cfg.get(
+            "boundary_gate", global_boundary_gate
+        )
+        global_boundary_min_keep = self.global_cfg.get(
+            "boundary_min_keep", global_boundary_min_keep
+        )
+        global_boundary_detach = self.global_cfg.get(
+            "boundary_detach", global_boundary_detach
+        )
 
         # Fusion config
         # Currently reserved. Router global_weight is used directly.
@@ -202,9 +220,25 @@ class KPConvXHybrid(KPConvXStage2):
         refine_dropout = self.refine_cfg.get("dropout", refine_dropout)
         refine_use_coords = self.refine_cfg.get("use_coords", refine_use_coords)
         refine_use_boundary = self.refine_cfg.get("use_boundary", refine_use_boundary)
+        boundary_hidden_ratio = self.refine_cfg.get(
+            "boundary_hidden_ratio", boundary_hidden_ratio
+        )
+        boundary_dropout = self.refine_cfg.get("boundary_dropout", boundary_dropout)
+        boundary_loss_weight = self.refine_cfg.get(
+            "boundary_loss_weight", boundary_loss_weight
+        )
+        boundary_ignore_index = self.refine_cfg.get(
+            "boundary_ignore_index", boundary_ignore_index
+        )
+        boundary_dilate_steps = self.refine_cfg.get(
+            "boundary_dilate_steps", boundary_dilate_steps
+        )
 
         self.enable_router = bool(enable_router)
         self.router_stages = tuple(router_stages) if self.enable_router else tuple()
+        self.boundary_loss_weight = float(boundary_loss_weight)
+        self.boundary_ignore_index = int(boundary_ignore_index)
+        self.boundary_dilate_steps = int(boundary_dilate_steps)
 
         self._hybrid_init_channels = init_channels
         self._hybrid_channel_scaling = channel_scaling
@@ -230,6 +264,9 @@ class KPConvXHybrid(KPConvXStage2):
             global_context_max_tokens_per_stage=global_context_max_tokens_per_stage,
             global_cross_attention_heads=global_cross_attention_heads,
             global_cross_attention_chunk_size=global_cross_attention_chunk_size,
+            global_boundary_gate=global_boundary_gate,
+            global_boundary_min_keep=global_boundary_min_keep,
+            global_boundary_detach=global_boundary_detach,
             enable_da=enable_da,
             use_da_kernel=use_da_kernel,
             da_stages=da_stages,
@@ -300,6 +337,21 @@ class KPConvXHybrid(KPConvXStage2):
                 use_boundary=refine_use_boundary,
             )
 
+        self.enable_boundary_head = (
+            bool(self.global_boundary_gate)
+            and self.task == "cloud_segmentation"
+            and self.global_context_fusion == "decoder"
+        )
+
+        if self.enable_boundary_head:
+            boundary_dim = layer_channels[0]
+            boundary_hidden_dim = max(32, int(boundary_dim * float(boundary_hidden_ratio)))
+            self.boundary_risk_head = BoundaryRiskHead(
+                dim=boundary_dim,
+                hidden_dim=boundary_hidden_dim,
+                dropout=boundary_dropout,
+            )
+
     def _route_stage_if_needed(self, stage_idx, feats, points, neighbors):
         if not self.enable_router:
             return None
@@ -328,11 +380,32 @@ class KPConvXHybrid(KPConvXStage2):
 
         return feats + global_weight * (out - feats)
 
-    def _apply_refine_if_needed(self, feats, points, neighbors):
+    def _apply_refine_if_needed(self, feats, points, neighbors, boundary_score=None):
         if not self.enable_refine:
             return feats
 
-        return self.decoder_refine(feats, points, neighbors)
+        return self.decoder_refine(feats, points, neighbors, boundary_score=boundary_score)
+
+    def _predict_boundary_if_needed(self, feats, points, neighbors):
+        if not self.enable_boundary_head:
+            return None, None
+
+        boundary_logits = self.boundary_risk_head(feats, points, neighbors)
+        boundary_risk = torch.sigmoid(boundary_logits)
+        return boundary_logits, boundary_risk
+
+    def _build_boundary_target_if_needed(self, data_dict, neighbors):
+        if not self.enable_boundary_head:
+            return None, None
+        if "segment" not in data_dict:
+            return None, None
+
+        return BoundaryRiskHead.build_target(
+            segment=data_dict["segment"],
+            neighbors=neighbors,
+            ignore_index=self.boundary_ignore_index,
+            dilate_steps=self.boundary_dilate_steps,
+        )
 
     def forward(self, data_dict):
         # ------ Init ------
@@ -493,7 +566,7 @@ class KPConvXHybrid(KPConvXStage2):
                             in_dict.lengths[l],
                         )
 
-            feats = self._apply_refine_if_needed(
+            boundary_logits, boundary_risk = self._predict_boundary_if_needed(
                 feats=feats,
                 points=in_dict.points[0],
                 neighbors=in_dict.neighbors[0],
@@ -503,8 +576,32 @@ class KPConvXHybrid(KPConvXStage2):
                 lengths=in_dict.lengths[0],
                 context_tokens=context_tokens,
                 local_stats=self._last_da_radius_local_stats,
+                boundary_risk=boundary_risk,
             )
+            refine_boundary = boundary_risk
+            if refine_boundary is not None and self.global_boundary_detach:
+                refine_boundary = refine_boundary.detach()
+            feats = self._apply_refine_if_needed(
+                feats=feats,
+                points=in_dict.points[0],
+                neighbors=in_dict.neighbors[0],
+                boundary_score=refine_boundary,
+            )
+        else:
+            boundary_logits = None
 
         # ------ Head ------
         logits = self.head(feats)
+        if self.enable_boundary_head:
+            boundary_target, boundary_valid_mask = self._build_boundary_target_if_needed(
+                data_dict=data_dict,
+                neighbors=in_dict.neighbors[0],
+            )
+            return dict(
+                seg_logits=logits,
+                boundary_logits=boundary_logits,
+                boundary_target=boundary_target,
+                boundary_valid_mask=boundary_valid_mask,
+                boundary_loss_weight=self.boundary_loss_weight,
+            )
         return logits

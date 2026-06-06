@@ -103,7 +103,7 @@ class DecoderRefineHead(nn.Module):
         scale = centered.abs().amax(dim=0, keepdim=True).clamp(min=1e-6)
         return centered / scale
 
-    def forward(self, feats, points, neighbors):
+    def forward(self, feats, points, neighbors, boundary_score=None):
         if feats.numel() == 0:
             return feats
 
@@ -119,7 +119,11 @@ class DecoderRefineHead(nn.Module):
         feat_diff = torch.norm(x - mean_feat, dim=-1, keepdim=True)
         coord_diff = torch.norm(points - mean_point, dim=-1, keepdim=True)
 
-        if self.boundary_mlp is not None:
+        if boundary_score is not None:
+            if boundary_score.dim() == 1:
+                boundary_score = boundary_score.unsqueeze(-1)
+            boundary_score = boundary_score.to(dtype=feat_diff.dtype)
+        elif self.boundary_mlp is not None:
             boundary_score = self.boundary_mlp(torch.cat([feat_diff, coord_diff], dim=-1))
         else:
             boundary_score = feat_diff.new_ones((feat_diff.shape[0], 1))

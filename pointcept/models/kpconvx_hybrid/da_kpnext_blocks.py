@@ -285,6 +285,10 @@ class DAKPConvX(nn.Module):
         bn_momentum: float = 0.1,
         activation: nn.Module = nn.LeakyReLU(0.1),
         inf: float = 1e6,
+        da_meta_dim: int = 0,
+        da_meta_hidden_ratio: float = 0.25,
+        da_meta_use_shell_bias: bool = False,
+        da_meta_use_point_bias: bool = False,
     ):
         super(DAKPConvX, self).__init__()
 
@@ -308,6 +312,13 @@ class DAKPConvX(nn.Module):
         self.ch_per_grp = ch_per_grp
         self.groups = attention_groups
         self.mod_grp_norm = mod_grp_norm
+        self.da_meta_dim = int(da_meta_dim or 0)
+        self.da_meta_use_shell_bias = bool(da_meta_use_shell_bias)
+        self.da_meta_use_point_bias = bool(da_meta_use_point_bias)
+        self.da_meta_enabled = (
+            self.da_meta_dim > 0
+            and (self.da_meta_use_shell_bias or self.da_meta_use_point_bias)
+        )
 
         self.weights = nn.Parameter(torch.zeros(size=(self.K, channels)), requires_grad=True)
         kaiming_uniform_(self.weights, a=math.sqrt(5))
@@ -344,6 +355,32 @@ class DAKPConvX(nn.Module):
 
         self.grpnorm = nn.GroupNorm(self.K, self.K * self.ch_per_grp)
 
+        if self.da_meta_enabled:
+            hidden_dim = max(8, int(channels * float(da_meta_hidden_ratio)))
+            self.da_meta_norm = nn.LayerNorm(self.da_meta_dim)
+            self.da_meta_pre = nn.Sequential(
+                nn.Linear(self.da_meta_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+            )
+            if self.da_meta_use_shell_bias:
+                self.num_shells = len(self.shell_sizes)
+                shell_ids = torch.repeat_interleave(
+                    torch.arange(self.num_shells, dtype=torch.long),
+                    torch.tensor(self.shell_sizes, dtype=torch.long),
+                )
+                self.register_buffer("kp_shell_ids", shell_ids, persistent=False)
+                self.da_meta_shell_out = nn.Linear(
+                    hidden_dim, self.num_shells * self.ch_per_grp
+                )
+                nn.init.zeros_(self.da_meta_shell_out.weight)
+                nn.init.zeros_(self.da_meta_shell_out.bias)
+            if self.da_meta_use_point_bias:
+                self.da_meta_point_out = nn.Linear(
+                    hidden_dim, self.K * self.ch_per_grp
+                )
+                nn.init.zeros_(self.da_meta_point_out.weight)
+                nn.init.zeros_(self.da_meta_point_out.bias)
+
         if attention_act == "sigmoid":
             self.attention_act = torch.sigmoid
         elif attention_act == "tanh":
@@ -361,6 +398,38 @@ class DAKPConvX(nn.Module):
             fixed=self.fixed_kernel_points,
         )
         return torch.from_numpy(kernel_points).float()
+
+    def _build_da_meta_bias(self, da_meta, alpha_logits: Tensor) -> Tensor:
+        if not self.da_meta_enabled or da_meta is None:
+            return torch.zeros_like(alpha_logits)
+
+        if isinstance(da_meta, dict):
+            da_meta = da_meta.get("feat")
+        if da_meta is None:
+            return torch.zeros_like(alpha_logits)
+
+        da_meta = da_meta.to(device=alpha_logits.device, dtype=alpha_logits.dtype)
+        if da_meta.shape[0] != alpha_logits.shape[0]:
+            raise ValueError(
+                f"da_meta length {da_meta.shape[0]} does not match query points {alpha_logits.shape[0]}"
+            )
+
+        h = self.da_meta_pre(self.da_meta_norm(da_meta))
+        bias = torch.zeros_like(alpha_logits)
+
+        if self.da_meta_use_shell_bias:
+            shell_bias = self.da_meta_shell_out(h).view(
+                -1, self.num_shells, self.ch_per_grp
+            )
+            kp_bias = shell_bias.index_select(
+                1, self.kp_shell_ids.to(device=shell_bias.device)
+            )
+            bias = bias + kp_bias.reshape(-1, self.K * self.ch_per_grp)
+
+        if self.da_meta_use_point_bias:
+            bias = bias + self.da_meta_point_out(h)
+
+        return bias
 
     @torch.no_grad()
     def get_neighbors_influences(
@@ -464,6 +533,7 @@ class DAKPConvX(nn.Module):
         neighb_inds: Tensor,
         da_scale: Tensor = None,
         da_radius_scale: Tensor = None,
+        da_meta=None,
     ) -> Tensor:
         """
         DA-KPConvX forward.
@@ -483,6 +553,10 @@ class DAKPConvX(nn.Module):
             modulations = modulations.transpose(0, 1).unsqueeze(0)
             modulations = self.grpnorm(modulations)
             modulations = modulations.squeeze(0).transpose(0, 1)
+
+        modulations = modulations + self._build_da_meta_bias(
+            da_meta, modulations
+        )
 
         modulations = self.attention_act(modulations)
 
@@ -613,7 +687,16 @@ class KPNextBlock(nn.Module):
                 activation,
             )
 
-    def forward(self, q_pts, s_pts, x, neighbor_indices, da_scale=None, da_radius_scale=None):
+    def forward(
+        self,
+        q_pts,
+        s_pts,
+        x,
+        neighbor_indices,
+        da_scale=None,
+        da_radius_scale=None,
+        da_meta=None,
+    ):
         if self.mlp_first:
             if self.in_channels != self.out_channels:
                 x = self.up_mlp(x)
@@ -626,6 +709,7 @@ class KPNextBlock(nn.Module):
                     neighbor_indices,
                     da_scale=da_scale,
                     da_radius_scale=da_radius_scale,
+                    da_meta=da_meta,
                 )
             else:
                 x = self.conv(q_pts, s_pts, x, neighbor_indices)
@@ -642,6 +726,7 @@ class KPNextBlock(nn.Module):
                     neighbor_indices,
                     da_scale=da_scale,
                     da_radius_scale=da_radius_scale,
+                    da_meta=da_meta,
                 )
             else:
                 x = self.conv(q_pts, s_pts, x, neighbor_indices)
@@ -742,7 +827,16 @@ class KPNextResidualBlock(nn.Module):
         else:
             self.unary_shortcut = nn.Identity()
 
-    def forward(self, q_pts, s_pts, s_feats, neighbor_indices, da_scale=None, da_radius_scale=None):
+    def forward(
+        self,
+        q_pts,
+        s_pts,
+        s_feats,
+        neighbor_indices,
+        da_scale=None,
+        da_radius_scale=None,
+        da_meta=None,
+    ):
         x = self.unary1(s_feats)
 
         if isinstance(self.conv, DAKPConvX):
@@ -753,6 +847,7 @@ class KPNextResidualBlock(nn.Module):
                 neighbor_indices,
                 da_scale=da_scale,
                 da_radius_scale=da_radius_scale,
+                da_meta=da_meta,
             )
         else:
             x = self.conv(q_pts, s_pts, x, neighbor_indices)
@@ -862,7 +957,16 @@ class KPNextInvertedBlock(nn.Module):
 
         self.drop_path = DropPathPack(drop_path) if drop_path > 0.0 else nn.Identity()
 
-    def forward(self, q_pts, s_pts, s_feats, neighbor_indices, da_scale=None, da_radius_scale=None):
+    def forward(
+        self,
+        q_pts,
+        s_pts,
+        s_feats,
+        neighbor_indices,
+        da_scale=None,
+        da_radius_scale=None,
+        da_meta=None,
+    ):
         if isinstance(self.conv, DAKPConvX):
             x = self.conv(
                 q_pts,
@@ -871,6 +975,7 @@ class KPNextInvertedBlock(nn.Module):
                 neighbor_indices,
                 da_scale=da_scale,
                 da_radius_scale=da_radius_scale,
+                da_meta=da_meta,
             )
         else:
             x = self.conv(q_pts, s_pts, s_feats, neighbor_indices)
@@ -933,6 +1038,10 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         norm_type: str = "batch",
         bn_momentum: float = 0.1,
         activation: nn.Module = nn.LeakyReLU(0.1),
+        da_meta_dim: int = 0,
+        da_meta_hidden_ratio: float = 0.25,
+        da_meta_use_shell_bias: bool = False,
+        da_meta_use_point_bias: bool = False,
     ):
         super(DAKPNextMultiShortcutBlock, self).__init__()
 
@@ -973,6 +1082,10 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 norm_type=norm_type,
                 bn_momentum=bn_momentum,
                 activation=activation,
+                da_meta_dim=da_meta_dim,
+                da_meta_hidden_ratio=da_meta_hidden_ratio,
+                da_meta_use_shell_bias=da_meta_use_shell_bias,
+                da_meta_use_point_bias=da_meta_use_point_bias,
             )
 
         self.conv_norm = NormBlock(in_channels, norm_type, bn_momentum)
@@ -1014,6 +1127,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         upcut=None,
         da_scale=None,
         da_radius_scale=None,
+        da_meta=None,
     ):
         downcut = s_feats
 
@@ -1025,6 +1139,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 neighbor_indices,
                 da_scale=da_scale,
                 da_radius_scale=da_radius_scale,
+                da_meta=da_meta,
             )
         else:
             x = self.conv(

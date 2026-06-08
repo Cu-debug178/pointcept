@@ -170,9 +170,19 @@ class DensityAdaptiveRadius(nn.Module):
         return rho_norm
 
     @torch.no_grad()
-    def forward(self, points, neighbors, lengths=None, scale_range=None):
+    def forward(self, points, neighbors, lengths=None, scale_range=None, return_meta=False):
         if points.numel() == 0:
-            return points.new_zeros((0, 1))
+            scale = points.new_zeros((0, 1))
+            if not return_meta:
+                return scale
+            meta = dict(
+                feat=points.new_zeros((0, 4), dtype=torch.float32),
+                scale=scale.to(torch.float32),
+                rho_norm=scale.to(torch.float32),
+                valid_ratio=scale.to(torch.float32),
+                dist_cv=scale.to(torch.float32),
+            )
+            return scale, meta
 
         s_min = self.s_min if scale_range is None else float(scale_range[0])
         s_max = self.s_max if scale_range is None else float(scale_range[1])
@@ -187,6 +197,7 @@ class DensityAdaptiveRadius(nn.Module):
         self_mask = dist <= self.eps
         valid = valid * (~self_mask).float()
 
+        used_k = max(int(neighbors.shape[1]), 1)
         valid_count = valid.sum(dim=1, keepdim=True)
         mean_dist = (dist * valid).sum(dim=1, keepdim=True) / valid_count.clamp(min=1.0)
 
@@ -203,4 +214,31 @@ class DensityAdaptiveRadius(nn.Module):
         sparse_score = (1.0 - rho_norm).clamp(0.0, 1.0).pow(self.power)
         raw_scale = s_min + (s_max - s_min) * sparse_score
         scale = 1.0 + self.strength * (raw_scale - 1.0)
-        return scale.clamp(min=s_min, max=s_max).detach()
+        scale = scale.clamp(min=s_min, max=s_max).detach()
+
+        if not return_meta:
+            return scale
+
+        var_dist = ((dist - mean_dist) ** 2 * valid).sum(
+            dim=1, keepdim=True
+        ) / valid_count.clamp(min=1.0)
+        std_dist = torch.sqrt(var_dist + self.eps)
+        dist_cv = (std_dist / (mean_dist + self.eps)).clamp(0.0, 2.0) / 2.0
+        valid_ratio = (valid_count / float(used_k)).clamp(0.0, 1.0)
+        feat = torch.cat(
+            [
+                scale - 1.0,
+                rho_norm.detach(),
+                valid_ratio.detach(),
+                dist_cv.detach(),
+            ],
+            dim=1,
+        ).to(torch.float32)
+        meta = dict(
+            feat=feat.detach(),
+            scale=scale.to(torch.float32),
+            rho_norm=rho_norm.detach().to(torch.float32),
+            valid_ratio=valid_ratio.detach().to(torch.float32),
+            dist_cv=dist_cv.detach().to(torch.float32),
+        )
+        return scale, meta

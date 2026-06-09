@@ -287,6 +287,7 @@ class DAKPConvX(nn.Module):
         inf: float = 1e6,
         da_meta_dim: int = 0,
         da_meta_hidden_ratio: float = 0.25,
+        da_meta_use_channel_bias: bool = False,
         da_meta_use_shell_bias: bool = False,
         da_meta_use_point_bias: bool = False,
     ):
@@ -313,12 +314,18 @@ class DAKPConvX(nn.Module):
         self.groups = attention_groups
         self.mod_grp_norm = mod_grp_norm
         self.da_meta_dim = int(da_meta_dim or 0)
+        self.da_meta_use_channel_bias = bool(da_meta_use_channel_bias)
         self.da_meta_use_shell_bias = bool(da_meta_use_shell_bias)
         self.da_meta_use_point_bias = bool(da_meta_use_point_bias)
         self.da_meta_enabled = (
             self.da_meta_dim > 0
-            and (self.da_meta_use_shell_bias or self.da_meta_use_point_bias)
+            and (
+                self.da_meta_use_channel_bias
+                or self.da_meta_use_shell_bias
+                or self.da_meta_use_point_bias
+            )
         )
+        self._last_da_meta_diag = None
 
         self.weights = nn.Parameter(torch.zeros(size=(self.K, channels)), requires_grad=True)
         kaiming_uniform_(self.weights, a=math.sqrt(5))
@@ -362,6 +369,10 @@ class DAKPConvX(nn.Module):
                 nn.Linear(self.da_meta_dim, hidden_dim),
                 nn.ReLU(inplace=True),
             )
+            if self.da_meta_use_channel_bias:
+                self.da_meta_channel_out = nn.Linear(hidden_dim, self.ch_per_grp)
+                nn.init.zeros_(self.da_meta_channel_out.weight)
+                nn.init.zeros_(self.da_meta_channel_out.bias)
             if self.da_meta_use_shell_bias:
                 self.num_shells = len(self.shell_sizes)
                 shell_ids = torch.repeat_interleave(
@@ -416,6 +427,14 @@ class DAKPConvX(nn.Module):
 
         h = self.da_meta_pre(self.da_meta_norm(da_meta))
         bias = torch.zeros_like(alpha_logits)
+
+        if self.da_meta_use_channel_bias:
+            channel_bias = self.da_meta_channel_out(h).view(
+                -1, 1, self.ch_per_grp
+            )
+            bias = bias + channel_bias.expand(
+                -1, self.K, self.ch_per_grp
+            ).reshape(-1, self.K * self.ch_per_grp)
 
         if self.da_meta_use_shell_bias:
             shell_bias = self.da_meta_shell_out(h).view(
@@ -538,6 +557,7 @@ class DAKPConvX(nn.Module):
         """
         DA-KPConvX forward.
         """
+        self._last_da_meta_diag = None
 
         padded_s_feats = torch.cat((s_feats, torch.zeros_like(s_feats[:1, :])), 0)
         neighbor_feats = index_select(padded_s_feats, neighb_inds, dim=0)
@@ -554,9 +574,40 @@ class DAKPConvX(nn.Module):
             modulations = self.grpnorm(modulations)
             modulations = modulations.squeeze(0).transpose(0, 1)
 
-        modulations = modulations + self._build_da_meta_bias(
-            da_meta, modulations
-        )
+        da_meta_bias = self._build_da_meta_bias(da_meta, modulations)
+        if self.da_meta_enabled and da_meta is not None:
+            with torch.no_grad():
+                alpha_abs = modulations.detach().abs().mean()
+                bias_abs = da_meta_bias.detach().abs().mean()
+                channel_w_norm = modulations.new_zeros(())
+                channel_b_norm = modulations.new_zeros(())
+                if hasattr(self, "da_meta_channel_out"):
+                    channel_w_norm = self.da_meta_channel_out.weight.detach().norm().to(
+                        device=modulations.device, dtype=modulations.dtype
+                    )
+                    channel_b_norm = self.da_meta_channel_out.bias.detach().norm().to(
+                        device=modulations.device, dtype=modulations.dtype
+                    )
+                shell_w_norm = modulations.new_zeros(())
+                shell_b_norm = modulations.new_zeros(())
+                if hasattr(self, "da_meta_shell_out"):
+                    shell_w_norm = self.da_meta_shell_out.weight.detach().norm().to(
+                        device=modulations.device, dtype=modulations.dtype
+                    )
+                    shell_b_norm = self.da_meta_shell_out.bias.detach().norm().to(
+                        device=modulations.device, dtype=modulations.dtype
+                    )
+                self._last_da_meta_diag = dict(
+                    alpha_abs=alpha_abs,
+                    bias_abs=bias_abs,
+                    bias_alpha_ratio=bias_abs / alpha_abs.clamp(min=1.0e-6),
+                    channel_w_norm=channel_w_norm,
+                    channel_b_norm=channel_b_norm,
+                    shell_w_norm=shell_w_norm,
+                    shell_b_norm=shell_b_norm,
+                )
+
+        modulations = modulations + da_meta_bias
 
         modulations = self.attention_act(modulations)
 
@@ -1040,6 +1091,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         activation: nn.Module = nn.LeakyReLU(0.1),
         da_meta_dim: int = 0,
         da_meta_hidden_ratio: float = 0.25,
+        da_meta_use_channel_bias: bool = False,
         da_meta_use_shell_bias: bool = False,
         da_meta_use_point_bias: bool = False,
     ):
@@ -1084,6 +1136,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 activation=activation,
                 da_meta_dim=da_meta_dim,
                 da_meta_hidden_ratio=da_meta_hidden_ratio,
+                da_meta_use_channel_bias=da_meta_use_channel_bias,
                 da_meta_use_shell_bias=da_meta_use_shell_bias,
                 da_meta_use_point_bias=da_meta_use_point_bias,
             )

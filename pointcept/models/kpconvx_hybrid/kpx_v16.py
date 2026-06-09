@@ -130,6 +130,7 @@ class KPConvXV16(KPConvXStage2):
         da_meta_stages=(3, 4),
         da_meta_dim=4,
         da_meta_hidden_ratio=0.25,
+        da_meta_use_channel_bias=False,
         da_meta_use_shell_bias=False,
         da_meta_use_point_bias=False,
         enable_gc_mixer=False,
@@ -138,6 +139,8 @@ class KPConvXV16(KPConvXStage2):
         gc_hidden_ratio=1.0,
         gc_dropout=0.0,
         gc_gamma_init=0.0,
+        enable_v16_monitor=False,
+        v16_monitor_stages=None,
         init_channels=64,
         channel_scaling=math.sqrt(2),
         **kwargs,
@@ -146,6 +149,7 @@ class KPConvXV16(KPConvXStage2):
         self.da_meta_stages = tuple(da_meta_stages) if enable_da_meta else tuple()
         self.da_meta_dim = int(da_meta_dim)
         self.da_meta_hidden_ratio = float(da_meta_hidden_ratio)
+        self.da_meta_use_channel_bias = bool(da_meta_use_channel_bias)
         self.da_meta_use_shell_bias = bool(da_meta_use_shell_bias)
         self.da_meta_use_point_bias = bool(da_meta_use_point_bias)
 
@@ -155,6 +159,10 @@ class KPConvXV16(KPConvXStage2):
         self.gc_hidden_ratio = float(gc_hidden_ratio)
         self.gc_dropout = float(gc_dropout)
         self.gc_gamma_init = float(gc_gamma_init)
+        self.enable_v16_monitor = bool(enable_v16_monitor)
+        if v16_monitor_stages is None:
+            v16_monitor_stages = da_meta_stages
+        self.v16_monitor_stages = tuple(v16_monitor_stages)
 
         for key in (
             "enable_router",
@@ -274,6 +282,7 @@ class KPConvXV16(KPConvXStage2):
             bn_momentum=self.bn_momentum,
             da_meta_dim=self.da_meta_dim if self.enable_da_meta else 0,
             da_meta_hidden_ratio=self.da_meta_hidden_ratio,
+            da_meta_use_channel_bias=self.da_meta_use_channel_bias,
             da_meta_use_shell_bias=self.da_meta_use_shell_bias,
             da_meta_use_point_bias=self.da_meta_use_point_bias,
         )
@@ -324,6 +333,109 @@ class KPConvXV16(KPConvXStage2):
             )
 
         return torch.cat(pieces, dim=-1) if pieces else None
+
+    @staticmethod
+    def _safe_quantile(values, q):
+        if values.numel() == 0:
+            return values.new_zeros(())
+        return torch.quantile(values.float(), q)
+
+    def _collect_da_meta_diag(self, ref_tensor):
+        diag_lists = {}
+        for module in self.modules():
+            diag = getattr(module, "_last_da_meta_diag", None)
+            if not diag:
+                continue
+            for key, value in diag.items():
+                diag_lists.setdefault(key, []).append(
+                    value.detach().to(device=ref_tensor.device, dtype=ref_tensor.dtype)
+                )
+
+        metrics = {}
+        if not diag_lists:
+            zero = ref_tensor.new_zeros(())
+            metrics["v16_da_alpha_abs"] = zero
+            metrics["v16_da_bias_abs"] = zero
+            metrics["v16_da_bias_ratio"] = zero
+            metrics["v16_da_channel_w_norm"] = zero
+            metrics["v16_da_channel_b_norm"] = zero
+            metrics["v16_da_shell_w_norm"] = zero
+            metrics["v16_da_shell_b_norm"] = zero
+            return metrics
+
+        key_map = {
+            "alpha_abs": "v16_da_alpha_abs",
+            "bias_abs": "v16_da_bias_abs",
+            "bias_alpha_ratio": "v16_da_bias_ratio",
+            "channel_w_norm": "v16_da_channel_w_norm",
+            "channel_b_norm": "v16_da_channel_b_norm",
+            "shell_w_norm": "v16_da_shell_w_norm",
+            "shell_b_norm": "v16_da_shell_b_norm",
+        }
+        for src_key, dst_key in key_map.items():
+            values = diag_lists.get(src_key)
+            if values:
+                metrics[dst_key] = torch.stack(values).mean().detach()
+            else:
+                metrics[dst_key] = ref_tensor.new_zeros(())
+        return metrics
+
+    def _collect_stage_monitor(self, da_meta_by_stage, in_dict, ref_tensor):
+        metrics = {}
+        for stage in self.v16_monitor_stages:
+            stage = int(stage)
+            meta = da_meta_by_stage.get(stage)
+            if meta is None:
+                continue
+
+            scale = meta["scale"].reshape(-1).to(
+                device=ref_tensor.device, dtype=ref_tensor.dtype
+            )
+            feat = meta["feat"].to(device=ref_tensor.device, dtype=ref_tensor.dtype)
+
+            prefix = f"v16_s{stage}"
+            metrics[f"{prefix}_scale_p10"] = self._safe_quantile(scale, 0.10).to(
+                dtype=ref_tensor.dtype
+            )
+            metrics[f"{prefix}_scale_p50"] = self._safe_quantile(scale, 0.50).to(
+                dtype=ref_tensor.dtype
+            )
+            metrics[f"{prefix}_scale_p90"] = self._safe_quantile(scale, 0.90).to(
+                dtype=ref_tensor.dtype
+            )
+            metrics[f"{prefix}_rho"] = feat[:, 1].mean().detach()
+            metrics[f"{prefix}_meta_valid"] = feat[:, 2].mean().detach()
+            metrics[f"{prefix}_dist_cv"] = feat[:, 3].mean().detach()
+
+            l = stage - 1
+            if l < 0 or l >= len(in_dict.neighbors):
+                continue
+            neighbors = in_dict.neighbors[l]
+            num_points = int(in_dict.points[l].shape[0])
+            neighbor_limit = max(int(neighbors.shape[1]), 1)
+            valid = (neighbors >= 0) & (neighbors < num_points)
+            valid_count = valid.sum(dim=1).to(device=ref_tensor.device).float()
+            valid_ratio = valid_count / float(neighbor_limit)
+            metrics[f"{prefix}_graph_valid"] = valid_ratio.mean().to(
+                dtype=ref_tensor.dtype
+            )
+            metrics[f"{prefix}_shadow"] = (1.0 - valid_ratio.mean()).to(
+                dtype=ref_tensor.dtype
+            )
+            metrics[f"{prefix}_full"] = (
+                valid_count >= float(neighbor_limit)
+            ).float().mean().to(dtype=ref_tensor.dtype)
+        return metrics
+
+    def _collect_v16_monitor(self, da_meta_by_stage, in_dict, ref_tensor):
+        metrics = {}
+        metrics.update(self._collect_da_meta_diag(ref_tensor))
+        metrics.update(self._collect_stage_monitor(da_meta_by_stage, in_dict, ref_tensor))
+        if self.enable_gc_mixer and hasattr(self, "gc_mixer"):
+            metrics["v16_gc_gamma"] = self.gc_mixer.gamma.detach().reshape(()).to(
+                device=ref_tensor.device, dtype=ref_tensor.dtype
+            )
+        return metrics
 
     def forward(self, data_dict):
         points = data_dict["coord"]
@@ -472,4 +584,8 @@ class KPConvXV16(KPConvXStage2):
                 )
 
         logits = self.head(feats)
+        if self.enable_v16_monitor:
+            output = dict(seg_logits=logits)
+            output.update(self._collect_v16_monitor(da_meta_by_stage, in_dict, logits))
+            return output
         return logits

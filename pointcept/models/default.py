@@ -58,6 +58,26 @@ class DefaultSegmentor(nn.Module):
         weight = float(aux_dict.get("boundary_loss_weight", 1.0))
         return raw_loss * weight, target.mean()
 
+    @staticmethod
+    def _collect_aux_scalars(aux_dict):
+        if not aux_dict:
+            return {}
+
+        skip_keys = {
+            "seg_logits",
+            "boundary_logits",
+            "boundary_target",
+            "boundary_valid_mask",
+            "boundary_loss_weight",
+        }
+        scalars = {}
+        for key, value in aux_dict.items():
+            if key in skip_keys:
+                continue
+            if torch.is_tensor(value) and value.numel() == 1:
+                scalars[key] = value.detach()
+        return scalars
+
     def forward(self, input_dict):
         if "condition" in input_dict.keys():
             # PPT (https://arxiv.org/abs/2308.09718)
@@ -95,6 +115,7 @@ class DefaultSegmentor(nn.Module):
             if boundary_loss is not None:
                 return_dict["boundary_loss"] = boundary_loss.detach()
                 return_dict["boundary_pos_ratio"] = boundary_pos_ratio.detach()
+            return_dict.update(self._collect_aux_scalars(aux_dict))
             return return_dict
 
         # eval
@@ -107,6 +128,7 @@ class DefaultSegmentor(nn.Module):
             if boundary_loss is not None:
                 return_dict["boundary_loss"] = boundary_loss
                 return_dict["boundary_pos_ratio"] = boundary_pos_ratio
+            return_dict.update(self._collect_aux_scalars(aux_dict))
             return return_dict
 
         # test

@@ -326,6 +326,7 @@ class DAKPConvX(nn.Module):
             )
         )
         self._last_da_meta_diag = None
+        self._last_support_mask_diag = None
 
         self.weights = nn.Parameter(torch.zeros(size=(self.K, channels)), requires_grad=True)
         kaiming_uniform_(self.weights, a=math.sqrt(5))
@@ -410,6 +411,12 @@ class DAKPConvX(nn.Module):
         )
         return torch.from_numpy(kernel_points).float()
 
+    @staticmethod
+    def _safe_quantile(values: Tensor, q: float) -> Tensor:
+        if values.numel() == 0:
+            return values.new_zeros(())
+        return torch.quantile(values.float(), q)
+
     def _build_da_meta_bias(self, da_meta, alpha_logits: Tensor) -> Tensor:
         if not self.da_meta_enabled or da_meta is None:
             return torch.zeros_like(alpha_logits)
@@ -458,6 +465,8 @@ class DAKPConvX(nn.Module):
         neighb_inds: Tensor,
         da_scale: Tensor = None,
         da_radius_scale: Tensor = None,
+        da_radius_min_keep: int = 0,
+        da_radius_base_limit: int = None,
     ) -> Tensor:
         """
         Influence function of density-adaptive kernel points on neighbors.
@@ -468,6 +477,8 @@ class DAKPConvX(nn.Module):
             neighb_inds: neighbor indices, shape [M, H]
             da_scale: adaptive kernel scale for each query point, shape [M] or [M, 1]
             da_radius_scale: adaptive radius scale for each query point, shape [M] or [M, 1]
+            da_radius_min_keep: keep at least this many nearest valid neighbors after radius masking.
+            da_radius_base_limit: original neighbor limit used to estimate extra-neighbor utilization.
         """
 
         # When da_scale is provided, influence depends on each query point.
@@ -478,6 +489,8 @@ class DAKPConvX(nn.Module):
             neighbors_1nn = self.shared_kp_data["neighb_1nn"]
 
         else:
+            num_support = int(s_pts.shape[0])
+            valid_support_mask = (neighb_inds >= 0) & (neighb_inds < num_support)
             s_pts = torch.cat((s_pts, torch.zeros_like(s_pts[:1, :]) + self.inf), 0)
 
             neighbors = index_select(s_pts, neighb_inds, dim=0)
@@ -529,7 +542,72 @@ class DAKPConvX(nn.Module):
                     )
 
                 adaptive_radius = self.radius * da_radius_scale
-                radius_mask = torch.norm(neighbors, dim=-1) <= adaptive_radius
+                neighbor_dist = torch.norm(neighbors, dim=-1)
+                radius_mask = (neighbor_dist <= adaptive_radius) & valid_support_mask
+
+                min_keep = max(int(da_radius_min_keep or 0), 0)
+                if min_keep > 0 and radius_mask.shape[1] > 0:
+                    keep_count = radius_mask.sum(dim=1)
+                    valid_count = valid_support_mask.sum(dim=1)
+                    target_keep = valid_count.clamp(max=min_keep)
+                    fallback_hit = keep_count < target_keep
+                    if fallback_hit.any():
+                        k = min(min_keep, int(radius_mask.shape[1]))
+                        inf_dist = torch.full_like(neighbor_dist, self.inf)
+                        valid_dist = torch.where(valid_support_mask, neighbor_dist, inf_dist)
+                        nearest_idx = torch.topk(
+                            valid_dist,
+                            k=k,
+                            dim=1,
+                            largest=False,
+                        ).indices
+                        nearest_mask = torch.zeros_like(radius_mask)
+                        nearest_mask.scatter_(1, nearest_idx, True)
+                        radius_mask = radius_mask | (
+                            nearest_mask & valid_support_mask & fallback_hit.unsqueeze(1)
+                        )
+                else:
+                    fallback_hit = radius_mask.new_zeros(
+                        (radius_mask.shape[0],), dtype=torch.bool
+                    )
+
+                with torch.no_grad():
+                    keep_count = radius_mask.sum(dim=1).float()
+                    valid_count = valid_support_mask.sum(dim=1).float()
+                    denom = float(max(int(radius_mask.shape[1]), 1))
+                    keep_ratio = keep_count / denom
+                    valid_ratio = valid_count / denom
+
+                    extra_util = keep_ratio.new_zeros(())
+                    if da_radius_base_limit is not None:
+                        base_limit = max(int(da_radius_base_limit), 0)
+                        if base_limit < int(radius_mask.shape[1]):
+                            extra_slots = torch.arange(
+                                radius_mask.shape[1],
+                                device=radius_mask.device,
+                            ) >= base_limit
+                            extra_possible = valid_support_mask & extra_slots.unsqueeze(0)
+                            extra_kept = radius_mask & extra_slots.unsqueeze(0)
+                            extra_util = (
+                                extra_kept.float().sum()
+                                / extra_possible.float().sum().clamp(min=1.0)
+                            )
+
+                    self._last_support_mask_diag = dict(
+                        keep_ratio_p10=self._safe_quantile(keep_ratio, 0.10).to(
+                            dtype=neighbors.dtype
+                        ),
+                        keep_ratio_p50=self._safe_quantile(keep_ratio, 0.50).to(
+                            dtype=neighbors.dtype
+                        ),
+                        keep_ratio_p90=self._safe_quantile(keep_ratio, 0.90).to(
+                            dtype=neighbors.dtype
+                        ),
+                        valid_ratio=valid_ratio.mean().to(dtype=neighbors.dtype),
+                        fallback_hit=fallback_hit.float().mean().to(dtype=neighbors.dtype),
+                        extra_util=extra_util.to(dtype=neighbors.dtype),
+                    )
+
                 if self.influence_mode == "constant":
                     influence_weights = radius_mask.to(dtype=neighbors.dtype)
                 else:
@@ -552,12 +630,15 @@ class DAKPConvX(nn.Module):
         neighb_inds: Tensor,
         da_scale: Tensor = None,
         da_radius_scale: Tensor = None,
+        da_radius_min_keep: int = 0,
+        da_radius_base_limit: int = None,
         da_meta=None,
     ) -> Tensor:
         """
         DA-KPConvX forward.
         """
         self._last_da_meta_diag = None
+        self._last_support_mask_diag = None
 
         padded_s_feats = torch.cat((s_feats, torch.zeros_like(s_feats[:1, :])), 0)
         neighbor_feats = index_select(padded_s_feats, neighb_inds, dim=0)
@@ -623,6 +704,8 @@ class DAKPConvX(nn.Module):
             neighb_inds,
             da_scale=da_scale,
             da_radius_scale=da_radius_scale,
+            da_radius_min_keep=da_radius_min_keep,
+            da_radius_base_limit=da_radius_base_limit,
         )
 
         neighbors_weights = torch.gather(
@@ -1180,6 +1263,8 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         upcut=None,
         da_scale=None,
         da_radius_scale=None,
+        da_radius_min_keep: int = 0,
+        da_radius_base_limit: int = None,
         da_meta=None,
     ):
         downcut = s_feats
@@ -1192,6 +1277,8 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 neighbor_indices,
                 da_scale=da_scale,
                 da_radius_scale=da_radius_scale,
+                da_radius_min_keep=da_radius_min_keep,
+                da_radius_base_limit=da_radius_base_limit,
                 da_meta=da_meta,
             )
         else:

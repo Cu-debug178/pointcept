@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from pointcept.models.builder import MODELS
 
+from .da_kpconvx_block import DensityAdaptiveRadius
 from .da_kpnext_blocks import DAKPNextMultiShortcutBlock
 from .kpx_stage2 import KPConvXStage2
 
@@ -25,6 +26,7 @@ class GlobalContextMixerLite(nn.Module):
         self.stage_keys = [str(stage) for stage in stage_dims.keys()]
         self.stats_dim = int(stats_dim)
         hidden_dim = max(16, int(decoder_dim * float(hidden_ratio)))
+        self._last_diag = None
 
         self.stage_proj = nn.ModuleDict(
             {
@@ -87,6 +89,7 @@ class GlobalContextMixerLite(nn.Module):
 
     def forward(self, feats, lengths, stage_contexts, meta_cloud_stats=None):
         if not stage_contexts:
+            self._last_diag = None
             return feats
 
         projected = []
@@ -114,7 +117,17 @@ class GlobalContextMixerLite(nn.Module):
             gate_parts.append(self._expand_to_points(meta_ctx, lengths))
 
         gate_input = torch.cat(gate_parts, dim=-1)
-        return feats + self.gamma * self.gate(gate_input) * self.fuse(gate_input)
+        gate = self.gate(gate_input)
+        fused = self.fuse(gate_input)
+        residual = self.gamma * gate * fused
+        with torch.no_grad():
+            self._last_diag = dict(
+                ctx_abs=point_ctx.detach().abs().mean(),
+                gate_mean=gate.detach().mean(),
+                fuse_abs=fused.detach().abs().mean(),
+                residual_abs=residual.detach().abs().mean(),
+            )
+        return feats + residual
 
 
 @MODELS.register_module()
@@ -133,6 +146,19 @@ class KPConvXV16(KPConvXStage2):
         da_meta_use_channel_bias=False,
         da_meta_use_shell_bias=False,
         da_meta_use_point_bias=False,
+        enable_support_mask=False,
+        support_mask_stages=(3, 4),
+        support_mask_scale_range=(1.0, 1.2),
+        support_mask_stage_ranges=None,
+        support_mask_min_keep=None,
+        support_mask_base_limits=None,
+        support_mask_density_k=None,
+        support_mask_norm=None,
+        support_mask_percentile=None,
+        support_mask_strength=1.0,
+        support_mask_power=None,
+        support_mask_warmup_steps=0,
+        support_mask_ramp_steps=0,
         enable_gc_mixer=False,
         gc_stages=(5,),
         gc_use_meta_stats=False,
@@ -152,6 +178,22 @@ class KPConvXV16(KPConvXStage2):
         self.da_meta_use_channel_bias = bool(da_meta_use_channel_bias)
         self.da_meta_use_shell_bias = bool(da_meta_use_shell_bias)
         self.da_meta_use_point_bias = bool(da_meta_use_point_bias)
+
+        self.enable_support_mask = bool(enable_support_mask)
+        self.support_mask_stages = (
+            tuple(support_mask_stages) if enable_support_mask else tuple()
+        )
+        self.support_mask_scale_range = support_mask_scale_range
+        self._support_mask_stage_ranges_raw = support_mask_stage_ranges
+        self._support_mask_min_keep_raw = support_mask_min_keep
+        self._support_mask_base_limits_raw = support_mask_base_limits
+        self.support_mask_density_k = support_mask_density_k
+        self.support_mask_norm = support_mask_norm
+        self.support_mask_percentile = support_mask_percentile
+        self.support_mask_strength = float(support_mask_strength)
+        self.support_mask_power = support_mask_power
+        self.support_mask_warmup_steps = max(int(support_mask_warmup_steps), 0)
+        self.support_mask_ramp_steps = max(int(support_mask_ramp_steps), 0)
 
         self.enable_gc_mixer = bool(enable_gc_mixer)
         self.gc_stages = tuple(gc_stages) if enable_gc_mixer else tuple()
@@ -205,9 +247,27 @@ class KPConvXV16(KPConvXStage2):
         for stage in self.da_meta_stages:
             if stage < 1 or stage > self.num_layers:
                 raise ValueError(f"Invalid DA-meta stage index: {stage}")
+        for stage in self.support_mask_stages:
+            if stage < 1 or stage > self.num_layers:
+                raise ValueError(f"Invalid support-mask stage index: {stage}")
         for stage in self.gc_stages:
             if stage < 1 or stage > self.num_layers:
                 raise ValueError(f"Invalid GC mixer stage index: {stage}")
+
+        self.support_mask_stage_ranges = self._normalize_stage_ranges(
+            self._support_mask_stage_ranges_raw
+        )
+        self.support_mask_min_keep = self._normalize_stage_int_map(
+            self._support_mask_min_keep_raw
+        )
+        self.support_mask_base_limits = self._normalize_stage_int_map(
+            self._support_mask_base_limits_raw
+        )
+        self.register_buffer(
+            "support_mask_step",
+            torch.zeros((), dtype=torch.long),
+            persistent=True,
+        )
 
         layer_channels = self._compute_layer_channels(
             init_channels=init_channels,
@@ -236,6 +296,50 @@ class KPConvXV16(KPConvXStage2):
                 dropout=self.gc_dropout,
                 gamma_init=self.gc_gamma_init,
             )
+        if self.enable_support_mask:
+            self.support_mask_radius = DensityAdaptiveRadius(
+                scale_range=self.support_mask_scale_range,
+                density_k=(
+                    self.da_radius_density_k
+                    if self.support_mask_density_k is None
+                    else self.support_mask_density_k
+                ),
+                norm=(
+                    self.da_radius_norm
+                    if self.support_mask_norm is None
+                    else self.support_mask_norm
+                ),
+                percentile=(
+                    self.da_radius_percentile
+                    if self.support_mask_percentile is None
+                    else self.support_mask_percentile
+                ),
+                strength=self.support_mask_strength,
+                power=(
+                    self.da_radius_power
+                    if self.support_mask_power is None
+                    else self.support_mask_power
+                ),
+            )
+
+    @staticmethod
+    def _normalize_stage_int_map(values):
+        if values is None:
+            return {}
+        if isinstance(values, dict):
+            return {int(stage): int(value) for stage, value in values.items()}
+
+        normalized = {}
+        for index, item in enumerate(values, start=1):
+            if isinstance(item, dict):
+                stage = item.get("stage")
+                value = item.get("value", item.get("min_keep", item.get("limit")))
+                normalized[int(stage)] = int(value)
+            elif isinstance(item, (tuple, list)) and len(item) == 2:
+                normalized[int(item[0])] = int(item[1])
+            else:
+                normalized[index] = int(item)
+        return normalized
 
     def get_residual_block(
         self,
@@ -287,6 +391,48 @@ class KPConvXV16(KPConvXStage2):
             da_meta_use_point_bias=self.da_meta_use_point_bias,
         )
 
+    def _get_support_mask_scale_range(self, stage_idx):
+        return self.support_mask_stage_ranges.get(
+            int(stage_idx), self.support_mask_scale_range
+        )
+
+    def _get_support_mask_progress(self):
+        if not self.enable_support_mask:
+            return 0.0
+        step = int(self.support_mask_step.detach().cpu().item())
+        if step < self.support_mask_warmup_steps:
+            return 0.0
+        if self.support_mask_ramp_steps <= 0:
+            return 1.0
+        progress = (step - self.support_mask_warmup_steps + 1) / float(
+            self.support_mask_ramp_steps
+        )
+        return max(0.0, min(1.0, progress))
+
+    def _get_support_mask_scale_if_needed(self, stage_idx, points, neighbors, lengths):
+        if not self.enable_support_mask:
+            return None
+        if stage_idx not in self.support_mask_stages:
+            return None
+
+        scale = self.support_mask_radius(
+            points=points,
+            neighbors=neighbors,
+            lengths=lengths,
+            scale_range=self._get_support_mask_scale_range(stage_idx),
+        )
+        progress = self._get_support_mask_progress()
+        if progress < 1.0:
+            scale = 1.0 + float(progress) * (scale - 1.0)
+        return scale
+
+    def _get_support_mask_min_keep(self, stage_idx):
+        return int(self.support_mask_min_keep.get(int(stage_idx), 0))
+
+    def _get_support_mask_base_limit(self, stage_idx):
+        value = self.support_mask_base_limits.get(int(stage_idx))
+        return int(value) if value is not None else None
+
     def _get_da_meta_if_needed(self, stage_idx, points, neighbors, lengths):
         if not self.enable_da_meta:
             return None
@@ -313,6 +459,23 @@ class KPConvXV16(KPConvXStage2):
                 parts.append(feats[start:end].mean(dim=0))
             start = end
         return torch.stack(parts, dim=0)
+
+    @staticmethod
+    def _collect_support_mask_diag_from_blocks(blocks):
+        diag_lists = {}
+        for block in blocks:
+            for module in block.modules():
+                diag = getattr(module, "_last_support_mask_diag", None)
+                if not diag:
+                    continue
+                for key, value in diag.items():
+                    diag_lists.setdefault(key, []).append(value.detach())
+
+        return {
+            key: torch.stack(values).mean().detach()
+            for key, values in diag_lists.items()
+            if values
+        }
 
     def _collect_meta_cloud_stats(self, da_meta_by_stage, lengths_by_stage, feats):
         if not self.gc_use_meta_stats or self.gc_meta_stats_dim <= 0:
@@ -427,14 +590,68 @@ class KPConvXV16(KPConvXStage2):
             ).float().mean().to(dtype=ref_tensor.dtype)
         return metrics
 
-    def _collect_v16_monitor(self, da_meta_by_stage, in_dict, ref_tensor):
+    def _collect_support_mask_monitor(self, support_mask_by_stage, ref_tensor):
+        metrics = {}
+        if not self.enable_support_mask:
+            return metrics
+
+        metrics["v16_support_progress"] = ref_tensor.new_tensor(
+            float(self._get_support_mask_progress())
+        )
+        key_map = {
+            "scale_p10": "support_scale_p10",
+            "scale_p50": "support_scale_p50",
+            "scale_p90": "support_scale_p90",
+            "keep_ratio_p10": "support_keep_p10",
+            "keep_ratio_p50": "support_keep_p50",
+            "keep_ratio_p90": "support_keep_p90",
+            "valid_ratio": "support_valid",
+            "fallback_hit": "support_fallback",
+            "extra_util": "support_extra_util",
+        }
+        for stage in self.support_mask_stages:
+            stage = int(stage)
+            diag = support_mask_by_stage.get(stage, {})
+            prefix = f"v16_s{stage}"
+            for src_key, dst_key in key_map.items():
+                value = diag.get(src_key)
+                if value is None:
+                    value = ref_tensor.new_zeros(())
+                metrics[f"{prefix}_{dst_key}"] = value.to(
+                    device=ref_tensor.device, dtype=ref_tensor.dtype
+                )
+        return metrics
+
+    def _collect_v16_monitor(
+        self,
+        da_meta_by_stage,
+        support_mask_by_stage,
+        in_dict,
+        ref_tensor,
+    ):
         metrics = {}
         metrics.update(self._collect_da_meta_diag(ref_tensor))
         metrics.update(self._collect_stage_monitor(da_meta_by_stage, in_dict, ref_tensor))
+        metrics.update(
+            self._collect_support_mask_monitor(support_mask_by_stage, ref_tensor)
+        )
         if self.enable_gc_mixer and hasattr(self, "gc_mixer"):
             metrics["v16_gc_gamma"] = self.gc_mixer.gamma.detach().reshape(()).to(
                 device=ref_tensor.device, dtype=ref_tensor.dtype
             )
+            gc_diag = getattr(self.gc_mixer, "_last_diag", None) or {}
+            for src_key, dst_key in (
+                ("ctx_abs", "v16_gc_ctx_abs"),
+                ("gate_mean", "v16_gc_gate_mean"),
+                ("fuse_abs", "v16_gc_fuse_abs"),
+                ("residual_abs", "v16_gc_residual_abs"),
+            ):
+                value = gc_diag.get(src_key)
+                if value is None:
+                    value = ref_tensor.new_zeros(())
+                metrics[dst_key] = value.to(
+                    device=ref_tensor.device, dtype=ref_tensor.dtype
+                )
         return metrics
 
     def forward(self, data_dict):
@@ -459,6 +676,7 @@ class KPConvXV16(KPConvXStage2):
         skip_feats = []
         gc_stage_contexts = {}
         da_meta_by_stage = {}
+        support_mask_by_stage = {}
 
         for layer in range(1, self.num_layers + 1):
             l = layer - 1
@@ -485,6 +703,12 @@ class KPConvXV16(KPConvXStage2):
                     neighbors=in_dict.neighbors[l],
                     lengths=in_dict.lengths[l],
                 )
+                support_mask_scale = self._get_support_mask_scale_if_needed(
+                    stage_idx=layer,
+                    points=in_dict.points[l],
+                    neighbors=in_dict.neighbors[l],
+                    lengths=in_dict.lengths[l],
+                )
                 da_meta = self._get_da_meta_if_needed(
                     stage_idx=layer,
                     points=in_dict.points[l],
@@ -504,9 +728,43 @@ class KPConvXV16(KPConvXStage2):
                         in_dict.lengths[l],
                         upcut=upcut,
                         da_scale=da_scale,
-                        da_radius_scale=da_radius_scale,
+                        da_radius_scale=(
+                            support_mask_scale
+                            if support_mask_scale is not None
+                            else da_radius_scale
+                        ),
+                        da_radius_min_keep=(
+                            self._get_support_mask_min_keep(layer)
+                            if support_mask_scale is not None
+                            else 0
+                        ),
+                        da_radius_base_limit=(
+                            self._get_support_mask_base_limit(layer)
+                            if support_mask_scale is not None
+                            else None
+                        ),
                         da_meta=da_meta,
                     )
+
+                if support_mask_scale is not None:
+                    support_diag = self._collect_support_mask_diag_from_blocks(
+                        block_list
+                    )
+                    support_scale_flat = support_mask_scale.reshape(-1).detach()
+                    support_diag.update(
+                        dict(
+                            scale_p10=self._safe_quantile(
+                                support_scale_flat, 0.10
+                            ),
+                            scale_p50=self._safe_quantile(
+                                support_scale_flat, 0.50
+                            ),
+                            scale_p90=self._safe_quantile(
+                                support_scale_flat, 0.90
+                            ),
+                        )
+                    )
+                    support_mask_by_stage[int(layer)] = support_diag
 
             if self.enable_gc_mixer and layer in self.gc_stages:
                 gc_stage_contexts[str(layer)] = (feats, in_dict.lengths[l])
@@ -586,6 +844,19 @@ class KPConvXV16(KPConvXStage2):
         logits = self.head(feats)
         if self.enable_v16_monitor:
             output = dict(seg_logits=logits)
-            output.update(self._collect_v16_monitor(da_meta_by_stage, in_dict, logits))
+            output.update(
+                self._collect_v16_monitor(
+                    da_meta_by_stage,
+                    support_mask_by_stage,
+                    in_dict,
+                    logits,
+                )
+            )
+            if self.training and self.enable_support_mask:
+                with torch.no_grad():
+                    self.support_mask_step.add_(1)
             return output
+        if self.training and self.enable_support_mask:
+            with torch.no_grad():
+                self.support_mask_step.add_(1)
         return logits

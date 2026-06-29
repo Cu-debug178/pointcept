@@ -1,5 +1,15 @@
 _base_ = ["./semseg-kpconvx-hybrid-v16-local-da-stat-area5.py"]
 
+# 关闭训练结束后的慢速 precise test，只保留每个 epoch 的验证和 best checkpoint 选择。
+hooks = [
+    dict(type="CheckpointLoader"),
+    dict(type="ModelHook"),
+    dict(type="IterationTimer", warmup_iter=2),
+    dict(type="InformationWriter"),
+    dict(type="SemSegEvaluator"),
+    dict(type="CheckpointSaver", save_freq=None),
+]
+
 # v16b 主实验：受控半步支持集自适应。
 #
 # 和 v13/v13b 的区别：

@@ -290,6 +290,10 @@ class DAKPConvX(nn.Module):
         da_meta_use_channel_bias: bool = False,
         da_meta_use_shell_bias: bool = False,
         da_meta_use_point_bias: bool = False,
+        dual_support_enabled: bool = False,
+        dual_support_hidden_ratio: float = 0.25,
+        dual_support_gamma_init: float = 1.0e-3,
+        dual_support_gate_bias_init: float = -2.0,
     ):
         super(DAKPConvX, self).__init__()
 
@@ -327,6 +331,7 @@ class DAKPConvX(nn.Module):
         )
         self._last_da_meta_diag = None
         self._last_support_mask_diag = None
+        self._last_dual_support_diag = None
 
         self.weights = nn.Parameter(torch.zeros(size=(self.K, channels)), requires_grad=True)
         kaiming_uniform_(self.weights, a=math.sqrt(5))
@@ -393,6 +398,25 @@ class DAKPConvX(nn.Module):
                 nn.init.zeros_(self.da_meta_point_out.weight)
                 nn.init.zeros_(self.da_meta_point_out.bias)
 
+        self.dual_support_enabled = bool(dual_support_enabled)
+        if self.dual_support_enabled:
+            gate_in_dim = channels + max(self.da_meta_dim, 0)
+            hidden_dim = max(8, int(channels * float(dual_support_hidden_ratio)))
+            self.dual_support_gate = nn.Sequential(
+                nn.Linear(gate_in_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(hidden_dim, channels),
+                nn.Sigmoid(),
+            )
+            nn.init.zeros_(self.dual_support_gate[-2].weight)
+            nn.init.constant_(
+                self.dual_support_gate[-2].bias,
+                float(dual_support_gate_bias_init),
+            )
+            self.dual_support_gamma = nn.Parameter(
+                torch.full((1,), float(dual_support_gamma_init))
+            )
+
         if attention_act == "sigmoid":
             self.attention_act = torch.sigmoid
         elif attention_act == "tanh":
@@ -456,6 +480,54 @@ class DAKPConvX(nn.Module):
             bias = bias + self.da_meta_point_out(h)
 
         return bias
+
+    def _build_dual_support_gate(
+        self,
+        pooled_feats: Tensor,
+        da_meta,
+        ref_feats: Tensor,
+    ) -> Tensor:
+        if not self.dual_support_enabled:
+            return torch.ones_like(ref_feats)
+
+        gate_parts = [pooled_feats.detach()]
+        if self.da_meta_dim > 0:
+            if isinstance(da_meta, dict):
+                da_meta = da_meta.get("feat")
+            if da_meta is None:
+                da_meta = pooled_feats.new_zeros(
+                    (pooled_feats.shape[0], self.da_meta_dim)
+                )
+            else:
+                da_meta = da_meta.to(
+                    device=pooled_feats.device, dtype=pooled_feats.dtype
+                )
+            gate_parts.append(da_meta.detach())
+
+        gate_input = torch.cat(gate_parts, dim=-1)
+        return self.dual_support_gate(gate_input).to(
+            device=ref_feats.device, dtype=ref_feats.dtype
+        )
+
+    def _aggregate_neighbors(
+        self,
+        neighbor_feats: Tensor,
+        conv_weights: Tensor,
+        influence_weights: Tensor,
+        neighbors_1nn: Tensor,
+        apply_influence: bool,
+    ) -> Tensor:
+        neighbors_weights = torch.gather(
+            conv_weights,
+            1,
+            neighbors_1nn.unsqueeze(2).expand(-1, -1, self.channels),
+        )
+
+        if apply_influence and influence_weights is not None:
+            neighbors_weights *= influence_weights.unsqueeze(2)
+
+        weighted_neighbor_feats = self.merge_op(neighbor_feats, neighbors_weights)
+        return self.aggr_op(weighted_neighbor_feats, dim=1)
 
     @torch.no_grad()
     def get_neighbors_influences(
@@ -633,15 +705,28 @@ class DAKPConvX(nn.Module):
         da_radius_min_keep: int = 0,
         da_radius_base_limit: int = None,
         da_meta=None,
+        base_neighbor_limit: int = None,
+        dual_radius_scale: Tensor = None,
+        dual_radius_min_keep: int = 0,
+        dual_radius_base_limit: int = None,
+        dual_radius_progress: float = 1.0,
     ) -> Tensor:
         """
         DA-KPConvX forward.
         """
         self._last_da_meta_diag = None
         self._last_support_mask_diag = None
+        self._last_dual_support_diag = None
 
         padded_s_feats = torch.cat((s_feats, torch.zeros_like(s_feats[:1, :])), 0)
         neighbor_feats = index_select(padded_s_feats, neighb_inds, dim=0)
+        base_neighb_inds = neighb_inds
+        base_neighbor_feats = neighbor_feats
+        if base_neighbor_limit is not None:
+            base_neighbor_limit = max(int(base_neighbor_limit), 0)
+            if 0 < base_neighbor_limit < int(neighb_inds.shape[1]):
+                base_neighb_inds = neighb_inds[:, :base_neighbor_limit].contiguous()
+                base_neighbor_feats = neighbor_feats[:, :base_neighbor_limit, :]
 
         if q_pts.shape[0] == s_pts.shape[0]:
             pooled_feats = s_feats
@@ -701,25 +786,62 @@ class DAKPConvX(nn.Module):
         influence_weights, neighbors, neighbors_1nn = self.get_neighbors_influences(
             q_pts,
             s_pts,
-            neighb_inds,
+            base_neighb_inds,
             da_scale=da_scale,
             da_radius_scale=da_radius_scale,
             da_radius_min_keep=da_radius_min_keep,
             da_radius_base_limit=da_radius_base_limit,
         )
 
-        neighbors_weights = torch.gather(
-            conv_weights,
-            1,
-            neighbors_1nn.unsqueeze(2).expand(-1, -1, self.channels),
+        output_feats = self._aggregate_neighbors(
+            neighbor_feats=base_neighbor_feats,
+            conv_weights=conv_weights,
+            influence_weights=influence_weights,
+            neighbors_1nn=neighbors_1nn,
+            apply_influence=(
+                self.influence_mode != "constant" or da_radius_scale is not None
+            ),
         )
 
-        if self.influence_mode != "constant" or da_radius_scale is not None:
-            neighbors_weights *= influence_weights.unsqueeze(2)
+        if dual_radius_scale is not None and self.dual_support_enabled:
+            dual_influence, _, dual_1nn = self.get_neighbors_influences(
+                q_pts,
+                s_pts,
+                neighb_inds,
+                da_scale=da_scale,
+                da_radius_scale=dual_radius_scale,
+                da_radius_min_keep=dual_radius_min_keep,
+                da_radius_base_limit=dual_radius_base_limit,
+            )
+            dual_diag = self._last_support_mask_diag or {}
+            expanded_feats = self._aggregate_neighbors(
+                neighbor_feats=neighbor_feats,
+                conv_weights=conv_weights,
+                influence_weights=dual_influence,
+                neighbors_1nn=dual_1nn,
+                apply_influence=True,
+            )
+            gate = self._build_dual_support_gate(
+                pooled_feats=pooled_feats,
+                da_meta=da_meta,
+                ref_feats=output_feats,
+            )
+            progress = float(max(0.0, min(1.0, dual_radius_progress)))
+            residual = expanded_feats - output_feats
+            dual_delta = self.dual_support_gamma * progress * gate * residual
+            output_feats = output_feats + dual_delta
 
-        neighbor_feats = self.merge_op(neighbor_feats, neighbors_weights)
-
-        output_feats = self.aggr_op(neighbor_feats, dim=1)
+            with torch.no_grad():
+                output_abs = output_feats.detach().abs().mean().clamp(min=1.0e-6)
+                self._last_dual_support_diag = dict(dual_diag)
+                self._last_dual_support_diag.update(
+                    gamma=self.dual_support_gamma.detach().reshape(()).to(
+                        device=output_feats.device, dtype=output_feats.dtype
+                    ),
+                    gate_mean=gate.detach().mean(),
+                    residual_abs=dual_delta.detach().abs().mean(),
+                    residual_ratio=dual_delta.detach().abs().mean() / output_abs,
+                )
 
         return output_feats
 
@@ -1177,6 +1299,10 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         da_meta_use_channel_bias: bool = False,
         da_meta_use_shell_bias: bool = False,
         da_meta_use_point_bias: bool = False,
+        dual_support_enabled: bool = False,
+        dual_support_hidden_ratio: float = 0.25,
+        dual_support_gamma_init: float = 1.0e-3,
+        dual_support_gate_bias_init: float = -2.0,
     ):
         super(DAKPNextMultiShortcutBlock, self).__init__()
 
@@ -1222,6 +1348,10 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 da_meta_use_channel_bias=da_meta_use_channel_bias,
                 da_meta_use_shell_bias=da_meta_use_shell_bias,
                 da_meta_use_point_bias=da_meta_use_point_bias,
+                dual_support_enabled=dual_support_enabled,
+                dual_support_hidden_ratio=dual_support_hidden_ratio,
+                dual_support_gamma_init=dual_support_gamma_init,
+                dual_support_gate_bias_init=dual_support_gate_bias_init,
             )
 
         self.conv_norm = NormBlock(in_channels, norm_type, bn_momentum)
@@ -1266,6 +1396,11 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         da_radius_min_keep: int = 0,
         da_radius_base_limit: int = None,
         da_meta=None,
+        base_neighbor_limit: int = None,
+        dual_radius_scale=None,
+        dual_radius_min_keep: int = 0,
+        dual_radius_base_limit: int = None,
+        dual_radius_progress: float = 1.0,
     ):
         downcut = s_feats
 
@@ -1280,6 +1415,11 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 da_radius_min_keep=da_radius_min_keep,
                 da_radius_base_limit=da_radius_base_limit,
                 da_meta=da_meta,
+                base_neighbor_limit=base_neighbor_limit,
+                dual_radius_scale=dual_radius_scale,
+                dual_radius_min_keep=dual_radius_min_keep,
+                dual_radius_base_limit=dual_radius_base_limit,
+                dual_radius_progress=dual_radius_progress,
             )
         else:
             x = self.conv(

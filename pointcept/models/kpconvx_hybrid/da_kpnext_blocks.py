@@ -710,6 +710,7 @@ class DAKPConvX(nn.Module):
         dual_radius_min_keep: int = 0,
         dual_radius_base_limit: int = None,
         dual_radius_progress: float = 1.0,
+        dual_radius_alpha: float = 1.0,
     ) -> Tensor:
         """
         DA-KPConvX forward.
@@ -803,7 +804,14 @@ class DAKPConvX(nn.Module):
             ),
         )
 
-        if dual_radius_scale is not None and self.dual_support_enabled:
+        progress = float(max(0.0, min(1.0, dual_radius_progress)))
+        alpha = float(max(0.0, dual_radius_alpha))
+        if (
+            dual_radius_scale is not None
+            and self.dual_support_enabled
+            and progress > 0.0
+            and alpha > 0.0
+        ):
             dual_influence, _, dual_1nn = self.get_neighbors_influences(
                 q_pts,
                 s_pts,
@@ -826,18 +834,23 @@ class DAKPConvX(nn.Module):
                 da_meta=da_meta,
                 ref_feats=output_feats,
             )
-            progress = float(max(0.0, min(1.0, dual_radius_progress)))
             residual = expanded_feats - output_feats
-            dual_delta = self.dual_support_gamma * progress * gate * residual
+            dual_delta = alpha * self.dual_support_gamma * progress * gate * residual
             output_feats = output_feats + dual_delta
 
             with torch.no_grad():
                 output_abs = output_feats.detach().abs().mean().clamp(min=1.0e-6)
+                gamma = self.dual_support_gamma.detach().reshape(()).to(
+                    device=output_feats.device, dtype=output_feats.dtype
+                )
+                alpha_tensor = output_feats.new_tensor(alpha)
+                progress_tensor = output_feats.new_tensor(progress)
                 self._last_dual_support_diag = dict(dual_diag)
                 self._last_dual_support_diag.update(
-                    gamma=self.dual_support_gamma.detach().reshape(()).to(
-                        device=output_feats.device, dtype=output_feats.dtype
-                    ),
+                    alpha=alpha_tensor,
+                    progress=progress_tensor,
+                    gamma=gamma,
+                    effective_gamma=gamma * alpha_tensor * progress_tensor,
                     gate_mean=gate.detach().mean(),
                     residual_abs=dual_delta.detach().abs().mean(),
                     residual_ratio=dual_delta.detach().abs().mean() / output_abs,
@@ -1401,6 +1414,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
         dual_radius_min_keep: int = 0,
         dual_radius_base_limit: int = None,
         dual_radius_progress: float = 1.0,
+        dual_radius_alpha: float = 1.0,
     ):
         downcut = s_feats
 
@@ -1420,6 +1434,7 @@ class DAKPNextMultiShortcutBlock(nn.Module):
                 dual_radius_min_keep=dual_radius_min_keep,
                 dual_radius_base_limit=dual_radius_base_limit,
                 dual_radius_progress=dual_radius_progress,
+                dual_radius_alpha=dual_radius_alpha,
             )
         else:
             x = self.conv(

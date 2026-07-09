@@ -35,6 +35,7 @@ model = dict(
         dual_support_ramp_steps=5100,
         dual_support_gamma_init=1.0e-3,
         dual_support_gate_bias_init=-2.0,
+        dual_support_eval_alpha=None,
         enable_v17_monitor=True,
         v17_monitor_stages=(3, 4),
     )

@@ -29,6 +29,7 @@ class KPConvXV17(KPConvXV16):
         dual_support_gamma_init=1.0e-3,
         dual_support_gate_bias_init=-2.0,
         dual_support_hidden_ratio=0.25,
+        dual_support_eval_alpha=None,
         enable_v17_monitor=False,
         v17_monitor_stages=None,
         init_channels=64,
@@ -48,6 +49,9 @@ class KPConvXV17(KPConvXV16):
         self.dual_support_gamma_init = float(dual_support_gamma_init)
         self.dual_support_gate_bias_init = float(dual_support_gate_bias_init)
         self.dual_support_hidden_ratio = float(dual_support_hidden_ratio)
+        self.dual_support_eval_alpha = (
+            None if dual_support_eval_alpha is None else float(dual_support_eval_alpha)
+        )
         self.enable_v17_monitor = bool(enable_v17_monitor)
         if v17_monitor_stages is None:
             v17_monitor_stages = dual_support_stages
@@ -184,10 +188,22 @@ class KPConvXV17(KPConvXV16):
         )
         return max(0.0, min(1.0, progress))
 
-    def _get_dual_support_scale_if_needed(self, stage_idx, points, neighbors, lengths):
+    def _get_dual_support_alpha(self):
         if not self.enable_dual_support:
+            return 0.0
+        if not self.training and self.dual_support_eval_alpha is not None:
+            return max(0.0, float(self.dual_support_eval_alpha))
+        return 1.0
+
+    def _is_dual_support_stage(self, stage_idx):
+        return self.enable_dual_support and int(stage_idx) in self.dual_support_stages
+
+    def _get_dual_support_scale_if_needed(self, stage_idx, points, neighbors, lengths):
+        if not self._is_dual_support_stage(stage_idx):
             return None
-        if stage_idx not in self.dual_support_stages:
+        if self._get_dual_support_progress() <= 0.0:
+            return None
+        if self._get_dual_support_alpha() <= 0.0:
             return None
         return self.dual_support_radius(
             points=points,
@@ -228,10 +244,15 @@ class KPConvXV17(KPConvXV16):
         metrics["v17_dual_progress"] = ref_tensor.new_tensor(
             float(self._get_dual_support_progress())
         )
+        metrics["v17_dual_alpha"] = ref_tensor.new_tensor(
+            float(self._get_dual_support_alpha())
+        )
         key_map = {
             "scale_p10": "scale_p10",
             "scale_p50": "scale_p50",
             "scale_p90": "scale_p90",
+            "alpha": "alpha",
+            "progress": "progress",
             "keep_ratio_p10": "keep_p10",
             "keep_ratio_p50": "keep_p50",
             "keep_ratio_p90": "keep_p90",
@@ -239,6 +260,7 @@ class KPConvXV17(KPConvXV16):
             "fallback_hit": "fallback",
             "extra_util": "extra_util",
             "gamma": "gamma",
+            "effective_gamma": "effective_gamma",
             "gate_mean": "gate_mean",
             "residual_abs": "residual_abs",
             "residual_ratio": "residual_ratio",
@@ -311,6 +333,9 @@ class KPConvXV17(KPConvXV16):
                     neighbors=in_dict.neighbors[l],
                     lengths=in_dict.lengths[l],
                 )
+                dual_support_enabled_for_stage = self._is_dual_support_stage(layer)
+                dual_support_progress = self._get_dual_support_progress()
+                dual_support_alpha = self._get_dual_support_alpha()
                 da_meta = self._get_da_meta_if_needed(
                     stage_idx=layer,
                     points=in_dict.points[l],
@@ -336,7 +361,7 @@ class KPConvXV17(KPConvXV16):
                         da_meta=da_meta,
                         base_neighbor_limit=(
                             self._get_dual_support_base_limit(layer)
-                            if dual_support_scale is not None
+                            if dual_support_enabled_for_stage
                             else None
                         ),
                         dual_radius_scale=dual_support_scale,
@@ -350,7 +375,8 @@ class KPConvXV17(KPConvXV16):
                             if dual_support_scale is not None
                             else None
                         ),
-                        dual_radius_progress=self._get_dual_support_progress(),
+                        dual_radius_progress=dual_support_progress,
+                        dual_radius_alpha=dual_support_alpha,
                     )
 
                 if dual_support_scale is not None:

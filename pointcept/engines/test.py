@@ -191,8 +191,6 @@ class SemSegTester(TesterBase):
         ):
             make_dirs(os.path.join(save_path, "submit"))
         elif self.cfg.data.test.type == "NuScenesDataset" and comm.is_main_process():
-            import json
-
             make_dirs(os.path.join(save_path, "submit", "lidarseg", "test"))
             make_dirs(os.path.join(save_path, "submit", "test"))
             submission = dict(
@@ -563,8 +561,6 @@ class DINOSemSegTester(TesterBase):
         ):
             make_dirs(os.path.join(save_path, "submit"))
         elif self.cfg.data.test.type == "NuScenesDataset" and comm.is_main_process():
-            import json
-
             make_dirs(os.path.join(save_path, "submit", "lidarseg", "test"))
             make_dirs(os.path.join(save_path, "submit", "test"))
             submission = dict(

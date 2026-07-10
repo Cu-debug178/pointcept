@@ -16,9 +16,21 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 RUN_LOG="$LOG_ROOT/fixed_screen_${SERVER_ID}_${TIMESTAMP}.log"
 STATUS_LOG="$LOG_ROOT/fixed_screen_${SERVER_ID}_shutdown_status.log"
 CANCEL_FILE="$FIXED_ROOT/cancel_${SERVER_ID}_shutdown"
+LOCK_FILE="$FIXED_ROOT/run_${SERVER_ID}.lock"
 
 mkdir -p "$LOG_ROOT" "$FIXED_ROOT/results" "$FIXED_ROOT/bundles"
 cd "$PROJECT" || exit 2
+
+# Cancel a shutdown scheduled by an older wrapper before starting new work.
+shutdown -c >/dev/null 2>&1 || true
+
+exec 9> "$LOCK_FILE"
+if ! flock -n 9; then
+  echo "$(date '+%F %T') ${SERVER_ID} 已有固定复评任务运行，拒绝重复启动" \
+    | tee -a "$STATUS_LOG"
+  exit 3
+fi
+
 rm -f "$CANCEL_FILE"
 
 {

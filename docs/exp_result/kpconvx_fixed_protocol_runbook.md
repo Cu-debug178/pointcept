@@ -71,6 +71,8 @@ tail -f "$LOG"
 
 如需任务无论成功或失败都在 5 分钟后关机，使用仓库内的包装脚本。脚本不会在激活环境前启用 `set -u`，因此不会再次触发 `MKL_INTERFACE_LAYER: unbound variable`：
 
+脚本启动时会取消旧版本遗留的预约关机，并通过 `flock` 禁止同一 `server-id` 重复运行。评估 Python 进程保持前台同步执行，只有其退出并完成结果打包后才开始 300 秒关机倒计时。
+
 ```bash
 chmod +x scripts/run_fixed_screen_then_shutdown.sh
 mkdir -p exp/fixed_protocol/logs

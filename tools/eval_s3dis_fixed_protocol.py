@@ -754,8 +754,9 @@ def main():
         return 0
     if args.stage in {"screen", "all"}:
         if not entries:
-            print("No local checkpoints are available for screen on this server")
-            return 0
+            raise RuntimeError(
+                "No local checkpoints are available for screen on this server"
+            )
         run_stage_entries(
             args,
             entries,

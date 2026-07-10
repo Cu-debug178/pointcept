@@ -26,6 +26,14 @@ python tools/eval_s3dis_fixed_protocol.py \
 
 只在包含 v17 best/last 的服务器运行：
 
+如果上一轮包装任务失败后仍可能处于 300 秒关机倒计时，先执行：
+
+```bash
+bash scripts/cancel_fixed_shutdown.sh server-b
+```
+
+该脚本会同时写入新旧版本的取消标记、执行 `shutdown -c`，并停止旧的 `watch_train_then_shutdown.sh`。仅执行 `shutdown -c` 不能取消旧包装脚本内部的 `sleep 300; shutdown -h now`。
+
 ```bash
 python tools/eval_s3dis_fixed_protocol.py \
   --stage preflight \

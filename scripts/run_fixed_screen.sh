@@ -20,9 +20,6 @@ LOCK_FILE="$FIXED_ROOT/run_${SERVER_ID}.lock"
 mkdir -p "$LOG_ROOT" "$FIXED_ROOT/results" "$FIXED_ROOT/bundles"
 cd "$PROJECT" || exit 2
 
-# Clear any shutdown scheduled outside this evaluation before starting work.
-shutdown -c >/dev/null 2>&1 || true
-
 exec 9> "$LOCK_FILE"
 if ! flock -n 9; then
   echo "$(date '+%F %T') ${SERVER_ID} 已有固定复评任务运行，拒绝重复启动" \

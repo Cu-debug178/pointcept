@@ -19,7 +19,8 @@ mkdir -p "$LOG_ROOT"
   echo
 
   echo "===== SHUTDOWN SCHEDULE ====="
-  shutdown --show 2>&1 || true
+  # Read system state directly. Do not invoke the platform's shutdown command.
+  type -a shutdown 2>&1 || true
   if [ -f /run/systemd/shutdown/scheduled ]; then
     cat /run/systemd/shutdown/scheduled
   else

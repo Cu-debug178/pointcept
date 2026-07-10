@@ -63,6 +63,16 @@ class FixedProtocolTest(unittest.TestCase):
         self.assertEqual(len(best_keys), 2)
         self.assertEqual({key[-1] for key in best_keys}, {"best"})
 
+        selected_keys = expected_result_keys(
+            manifest,
+            checkpoint_kinds=["best"],
+            run_ids=["v17"],
+        )
+        self.assertEqual(
+            selected_keys,
+            {("v17", "v17", None, "best")},
+        )
+
     def test_metrics_from_counts(self):
         metrics = metrics_from_counts(
             intersection=[5, 3],

@@ -78,6 +78,12 @@ def parse_args():
         default=None,
         help="Evaluate only the selected checkpoint kinds; defaults to the manifest.",
     )
+    parser.add_argument(
+        "--run-ids",
+        nargs="+",
+        default=None,
+        help="Evaluate only the selected manifest run IDs.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--strict-local", action="store_true")
     parser.add_argument("--max-rooms", type=int, default=None)
@@ -216,6 +222,17 @@ def local_inventory(args):
         allow_missing=not args.strict_local,
     )
     checkpoint_kinds = getattr(args, "checkpoint_kinds", None)
+    run_ids = getattr(args, "run_ids", None)
+    if run_ids:
+        selected_run_ids = set(run_ids)
+        known_run_ids = {run["run_id"] for run in manifest["runs"]}
+        unknown_run_ids = selected_run_ids - known_run_ids
+        if unknown_run_ids:
+            raise ValueError(
+                f"Unknown --run-ids: {sorted(unknown_run_ids)}"
+            )
+        entries = [entry for entry in entries if entry["run_id"] in selected_run_ids]
+        missing = [entry for entry in missing if entry["run_id"] in selected_run_ids]
     if checkpoint_kinds:
         selected_kinds = set(checkpoint_kinds)
         entries = [
@@ -249,12 +266,14 @@ def local_inventory(args):
             checkpoint_kinds=(
                 list(checkpoint_kinds) if checkpoint_kinds else ["best", "last"]
             ),
+            run_ids=list(run_ids) if run_ids else None,
             screen_protocol="identity",
             tta_protocol="tta13",
             screen_expected_checkpoints=len(
                 expected_result_keys(
                     manifest,
                     checkpoint_kinds=checkpoint_kinds,
+                    run_ids=run_ids,
                 )
             ),
             tta_family_limit=1,
@@ -464,11 +483,19 @@ def run_preflight(args, entries):
     raise RuntimeError("All preflight point-limit/batch-size combinations failed")
 
 
-def expected_result_keys(manifest, families=None, checkpoint_kinds=None):
+def expected_result_keys(
+    manifest,
+    families=None,
+    checkpoint_kinds=None,
+    run_ids=None,
+):
     keys = set()
     selected_kinds = set(checkpoint_kinds) if checkpoint_kinds else None
+    selected_run_ids = set(run_ids) if run_ids else None
     for run in manifest["runs"]:
         if families is not None and run["family"] not in families:
+            continue
+        if selected_run_ids is not None and run["run_id"] not in selected_run_ids:
             continue
         for checkpoint_kind in run.get("checkpoints", ["best", "last"]):
             if selected_kinds is not None and checkpoint_kind not in selected_kinds:
@@ -520,10 +547,12 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
 
     actual_keys = {entry_key(entry) for entry in entries}
     checkpoint_kinds = getattr(args, "checkpoint_kinds", None)
+    run_ids = getattr(args, "run_ids", None)
     if stage_name == "screen":
         expected_keys = expected_result_keys(
             manifest,
             checkpoint_kinds=checkpoint_kinds,
+            run_ids=run_ids,
         )
         missing_keys = sorted(expected_keys - actual_keys, key=str)
         unexpected_keys = sorted(actual_keys - expected_keys, key=str)
@@ -556,6 +585,7 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
             manifest,
             families={manifest.get("baseline_family", "baseline"), selected_family},
             checkpoint_kinds=checkpoint_kinds,
+            run_ids=run_ids,
         )
         missing_keys = sorted(expected_keys - actual_keys, key=str)
         unexpected_keys = sorted(actual_keys - expected_keys, key=str)

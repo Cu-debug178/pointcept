@@ -72,7 +72,7 @@ nohup bash scripts/run_fixed_eval_safe.sh \
 
 ```bash
 nohup bash scripts/run_fixed_eval_safe.sh \
-  server-b screen 60000 4 6 best \
+  server-b screen 60000 4 6 best v16b-controlled-support_20260620_2030 \
   > exp/fixed_protocol/logs/bootstrap_screen_server-b.log 2>&1 < /dev/null &
 ```
 

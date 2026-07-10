@@ -8,13 +8,14 @@ POINT_MAX="${3:-60000}"
 FRAGMENT_BATCH_SIZE="${4:-4}"
 NUM_WORKERS="${5:-6}"
 CHECKPOINT_SELECTION="${6:-best}"
+RUN_ID="${7:-}"
 
 if [[ ! "$SERVER_ID" =~ ^server-[ab]$ ]]; then
-  echo "Usage: $0 server-a|server-b preflight|screen [point_max] [fragment_batch] [workers] [best|last|all]"
+  echo "Usage: $0 server-a|server-b preflight|screen [point_max] [fragment_batch] [workers] [best|last|all] [run_id]"
   exit 2
 fi
 if [[ "$STAGE" != "preflight" && "$STAGE" != "screen" ]]; then
-  echo "Usage: $0 server-a|server-b preflight|screen [point_max] [fragment_batch] [workers] [best|last|all]"
+  echo "Usage: $0 server-a|server-b preflight|screen [point_max] [fragment_batch] [workers] [best|last|all] [run_id]"
   exit 2
 fi
 if [[ "$CHECKPOINT_SELECTION" != "best" && "$CHECKPOINT_SELECTION" != "last" && "$CHECKPOINT_SELECTION" != "all" ]]; then
@@ -51,6 +52,7 @@ echo "point_max=$POINT_MAX"
 echo "fragment_batch_size=$FRAGMENT_BATCH_SIZE"
 echo "num_workers=$NUM_WORKERS"
 echo "checkpoint_selection=$CHECKPOINT_SELECTION"
+echo "run_id=${RUN_ID:-all}"
 echo "power_action=none"
 
 cd "$PROJECT" || exit 3
@@ -129,6 +131,11 @@ if [ "$CHECKPOINT_SELECTION" = "all" ]; then
 else
   CHECKPOINT_ARGS=(--checkpoint-kinds "$CHECKPOINT_SELECTION")
 fi
+if [ -n "$RUN_ID" ]; then
+  RUN_ARGS=(--run-ids "$RUN_ID")
+else
+  RUN_ARGS=()
+fi
 
 if [ "$STAGE" = "preflight" ]; then
   "$PYTHON_BIN" -u tools/eval_s3dis_fixed_protocol.py \
@@ -143,7 +150,8 @@ fi
 "$PYTHON_BIN" -u tools/eval_s3dis_fixed_protocol.py \
   --stage screen \
   "${COMMON_ARGS[@]}" \
-  "${CHECKPOINT_ARGS[@]}"
+  "${CHECKPOINT_ARGS[@]}" \
+  "${RUN_ARGS[@]}"
 TASK_EXIT=$?
 
 if [ "$TASK_EXIT" -eq 0 ] && [ -d "$RESULT_ROOT" ]; then

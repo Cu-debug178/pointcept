@@ -101,7 +101,7 @@ def parse_args():
 
 def configure_worker_cfg(args):
     from pointcept.engines.defaults import default_setup
-    from pointcept.utils.config import Config
+    from pointcept.utils.config import Config, ConfigDict
 
     cfg = Config.fromfile(args.config_file)
     cfg.save_path = str(Path(args.save_path).resolve())
@@ -115,6 +115,9 @@ def configure_worker_cfg(args):
     cfg.num_worker_test_per_gpu = max(int(args.num_worker_test), 0)
     cfg.empty_cache = False
     cfg.test.export_metrics = True
+    cfg.test.allow_missing_state_keys = []
+    if not bool(getattr(cfg.model.backbone, "enable_support_mask", False)):
+        cfg.test.allow_missing_state_keys = ["backbone.support_mask_step"]
 
     if args.data_root:
         cfg.data.test.data_root = args.data_root
@@ -123,7 +126,9 @@ def configure_worker_cfg(args):
         dict(type="NormalizeColor"),
     ]
     cfg.data.test.test_mode = True
-    cfg.data.test.test_cfg = canonical_test_cfg(args.point_max, args.protocol)
+    cfg.data.test.test_cfg = ConfigDict(
+        canonical_test_cfg(args.point_max, args.protocol)
+    )
     return default_setup(cfg)
 
 

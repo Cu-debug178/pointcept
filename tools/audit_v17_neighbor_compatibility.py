@@ -398,7 +398,7 @@ def load_checkpoint(model, weight_path):
 
 def build_audit_cfg(config_path, weight_path, args):
     from pointcept.engines.defaults import default_setup
-    from pointcept.utils.config import Config
+    from pointcept.utils.config import Config, ConfigDict
 
     cfg = Config.fromfile(config_path)
     cfg.save_path = str(Path(args.output_root).resolve())
@@ -414,7 +414,9 @@ def build_audit_cfg(config_path, weight_path, args):
         dict(type="NormalizeColor"),
     ]
     cfg.data.test.test_mode = True
-    cfg.data.test.test_cfg = canonical_test_cfg(args.point_max, "identity")
+    cfg.data.test.test_cfg = ConfigDict(
+        canonical_test_cfg(args.point_max, "identity")
+    )
     cfg.data.test.test_cfg["voxel_part_limit"] = 1
     return default_setup(cfg)
 

@@ -20,6 +20,7 @@ from tools.eval_s3dis_fixed_protocol import (
 from tools.s3dis_fixed_protocol import (
     PROTOCOL_VERSION,
     build_checkpoint_entries,
+    canonical_test_cfg,
     expected_run_metadata,
     identity_augmentations,
     load_manifest,
@@ -29,12 +30,20 @@ from tools.s3dis_fixed_protocol import (
     select_tta_family,
     tta13_augmentations,
 )
-
-
 class FixedProtocolTest(unittest.TestCase):
     def test_augmentation_counts(self):
         self.assertEqual(len(identity_augmentations()), 1)
         self.assertEqual(len(tta13_augmentations()), 13)
+
+    def test_test_cfg_supports_attribute_access(self):
+        try:
+            from pointcept.utils.config import ConfigDict
+        except ModuleNotFoundError as error:
+            self.skipTest(f"Pointcept config dependency unavailable: {error}")
+        cfg = ConfigDict(canonical_test_cfg(60000, "identity"))
+        self.assertEqual(cfg.voxelize.grid_size, 0.02)
+        self.assertEqual(cfg.crop.point_max, 60000)
+        self.assertEqual(len(cfg.aug_transform), 1)
 
     def test_fragment_batch_candidates_are_unique_and_ordered(self):
         self.assertEqual(fragment_batch_candidates(4, [2, 1, 2]), [4, 2, 1])

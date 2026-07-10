@@ -85,6 +85,25 @@ class TesterBase:
                     if comm.get_world_size() > 1:
                         key = "module." + key  # xxx.xxx -> module.xxx.xxx
                 weight[key] = value
+
+            allowed_missing_keys = tuple(
+                getattr(self.cfg.test, "allow_missing_state_keys", ())
+            )
+            if allowed_missing_keys:
+                model_state = model.state_dict()
+                initialized_keys = []
+                for allowed_key in allowed_missing_keys:
+                    candidates = (allowed_key, "module." + allowed_key)
+                    for candidate in candidates:
+                        if candidate in model_state and candidate not in weight:
+                            weight[candidate] = model_state[candidate]
+                            initialized_keys.append(candidate)
+                            break
+                if initialized_keys:
+                    self.logger.warning(
+                        "Initialized allowed missing checkpoint keys from the "
+                        f"current model: {initialized_keys}"
+                    )
             model.load_state_dict(weight, strict=True)
             self.logger.info(
                 "=> Loaded weight '{}' (epoch {})".format(

@@ -11,7 +11,7 @@ source /root/autodl-tmp/Pointcept/activate_env.sh
 python tools/eval_s3dis_fixed_protocol.py \
   --stage discover \
   --exp-root exp \
-  --output-root exp/s3dis/kpconvx-fixed-server-a
+  --output-root exp/fixed_protocol/results/kpconvx-fixed-server-a
 ```
 
 另一台把输出名改成 `kpconvx-fixed-server-b`。工具会分别生成：
@@ -30,34 +30,39 @@ python tools/eval_s3dis_fixed_protocol.py \
 python tools/eval_s3dis_fixed_protocol.py \
   --stage preflight \
   --exp-root exp \
-  --output-root exp/s3dis/kpconvx-fixed-server-b \
+  --output-root exp/fixed_protocol/results/kpconvx-fixed-server-b \
   --point-max 60000 \
-  --fallback-point-max 40000
+  --fallback-point-max 40000 \
+  --fragment-batch-size-test 4 \
+  --fallback-fragment-batch-sizes 2 1 \
+  --num-worker-test 6
 ```
 
 读取：
 
 ```bash
-cat exp/s3dis/kpconvx-fixed-server-b/point_max_decision.json
+cat exp/fixed_protocol/results/kpconvx-fixed-server-b/point_max_decision.json
 ```
 
-后续两台服务器必须使用相同的 `point_max`。
+后续两台服务器必须使用相同的 `selected_point_max` 和 `selected_fragment_batch_size`。预检优先保持 `point_max=60000`，fragment batch 按 `4 -> 2 -> 1` 降级；只有同一 point limit 的批量全部 OOM 才尝试 `40000`。
 
 ## 3. 两台服务器并行跑 screen
 
 假设预检选择 `60000`：
 
 ```bash
-LOG=exp/fixed_screen_server_a_$(date +%Y%m%d_%H%M).log
+mkdir -p exp/fixed_protocol/logs
+LOG=exp/fixed_protocol/logs/fixed_screen_server_a_$(date +%Y%m%d_%H%M).log
 nohup bash -lc '
 source /root/autodl-tmp/Pointcept/activate_env.sh
 cd /root/autodl-tmp/Pointcept
 python tools/eval_s3dis_fixed_protocol.py \
   --stage screen \
   --exp-root exp \
-  --output-root exp/s3dis/kpconvx-fixed-server-a \
+  --output-root exp/fixed_protocol/results/kpconvx-fixed-server-a \
   --point-max 60000 \
-  --num-worker-test 2
+  --fragment-batch-size-test 4 \
+  --num-worker-test 6
 ' > "$LOG" 2>&1 &
 tail -f "$LOG"
 ```
@@ -68,11 +73,12 @@ tail -f "$LOG"
 
 ```bash
 chmod +x scripts/run_fixed_screen_then_shutdown.sh
-nohup bash scripts/run_fixed_screen_then_shutdown.sh server-a 60000 \
-  > exp/fixed_screen_server-a_launcher.log 2>&1 &
+mkdir -p exp/fixed_protocol/logs
+nohup bash scripts/run_fixed_screen_then_shutdown.sh server-a 60000 4 6 \
+  > exp/fixed_protocol/logs/fixed_screen_server-a_launcher.log 2>&1 &
 ```
 
-服务器 B 使用 `nohup bash scripts/run_fixed_screen_then_shutdown.sh server-b 60000 ...`。正式启动前必须根据 v17 预检结果统一设置两台机器的 `POINT_MAX`。
+服务器 B 使用 `nohup bash scripts/run_fixed_screen_then_shutdown.sh server-b 60000 4 6 ...`。正式启动前必须根据 v17 预检结果统一设置两台机器的 `POINT_MAX` 和 fragment batch。
 
 ## 4. 生成小体积结果包
 
@@ -81,13 +87,14 @@ nohup bash scripts/run_fixed_screen_then_shutdown.sh server-a 60000 \
 ```bash
 python tools/eval_s3dis_fixed_protocol.py \
   --stage bundle \
-  --output-root exp/s3dis/kpconvx-fixed-server-a
+  --output-root exp/fixed_protocol/results/kpconvx-fixed-server-a \
+  --bundle-path exp/fixed_protocol/bundles/kpconvx-fixed-server-a-compact.zip
 ```
 
 生成：
 
 ```text
-exp/s3dis/kpconvx-fixed-server-a-compact.zip
+exp/fixed_protocol/bundles/kpconvx-fixed-server-a-compact.zip
 ```
 
 zip 不包含大体积房间预测，只包含日志、JSON 和 CSV。
@@ -121,10 +128,11 @@ exp/fixed-protocol-merged/tta_selection.json
 python tools/eval_s3dis_fixed_protocol.py \
   --stage tta13 \
   --exp-root exp \
-  --output-root exp/s3dis/kpconvx-fixed-server-a \
+  --output-root exp/fixed_protocol/results/kpconvx-fixed-server-a \
   --selected-family v16b \
   --point-max 60000 \
-  --num-worker-test 2
+  --fragment-batch-size-test 4 \
+  --num-worker-test 6
 ```
 
 示例中的 `v16b` 必须替换为实际选择结果。每台只运行本机存在的 baseline/入围族 checkpoint。完成后重新 bundle，并在本地对同一 `fixed-protocol-merged` 目录再次执行 merge。
@@ -144,9 +152,9 @@ TTA13 完整后生成：
 ```bash
 python tools/audit_v17_neighbor_compatibility.py \
   --exp-root exp \
-  --output-root exp/s3dis/v17-neighbor-compatibility-audit \
+  --output-root exp/fixed_protocol/audit/v17-neighbor-compatibility-audit \
   --point-max 60000 \
-  --num-worker-test 2
+  --num-worker-test 6
 ```
 
 先做两房间 smoke：
@@ -154,9 +162,9 @@ python tools/audit_v17_neighbor_compatibility.py \
 ```bash
 python tools/audit_v17_neighbor_compatibility.py \
   --exp-root exp \
-  --output-root exp/s3dis/v17-neighbor-compatibility-smoke \
+  --output-root exp/fixed_protocol/audit/v17-neighbor-compatibility-smoke \
   --point-max 60000 \
-  --num-worker-test 2 \
+  --num-worker-test 6 \
   --max-rooms 2 \
   --bootstrap 20
 ```

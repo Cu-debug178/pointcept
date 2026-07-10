@@ -200,11 +200,12 @@ def file_identity(path):
     return dict(path=str(path), size=int(stat.st_size), mtime_ns=int(stat.st_mtime_ns))
 
 
-def expected_run_metadata(entry, protocol, point_max):
+def expected_run_metadata(entry, protocol, point_max, fragment_batch_size_test=1):
     return dict(
         protocol_version=PROTOCOL_VERSION,
         protocol=protocol,
         point_max=int(point_max),
+        fragment_batch_size_test=max(int(fragment_batch_size_test), 1),
         family=entry["family"],
         run_id=entry["run_id"],
         seed=entry.get("seed"),
@@ -287,6 +288,7 @@ def collect_stage_results(stage_dir, entries):
             protocol_version=metadata["protocol_version"],
             protocol=metadata["protocol"],
             point_max=metadata["point_max"],
+            fragment_batch_size_test=metadata.get("fragment_batch_size_test", 1),
             family=entry["family"],
             run_id=entry["run_id"],
             seed=entry.get("seed"),

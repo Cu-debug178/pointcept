@@ -211,10 +211,27 @@ class SemSegTester(TesterBase):
             else:
                 #每个 fragment 及时释放显存，打印点云数目
                 pred = torch.zeros((segment.size, self.cfg.data.num_classes)).cuda()
-                fragment_batch_size = getattr(self.cfg, "fragment_batch_size_test", 1)
+                fragment_batch_size = max(
+                    int(getattr(self.cfg, "fragment_batch_size_test", 1)), 1
+                )
+                fragment_log_interval = max(
+                    int(getattr(self.cfg, "fragment_log_interval_test", 1)), 1
+                )
+                fragment_batch_num = (
+                    len(fragment_list) + fragment_batch_size - 1
+                ) // fragment_batch_size
+                logger.info(
+                    "Fragment inference: fragments={}, fragment_batch_size={}, "
+                    "fragment_batches={}".format(
+                        len(fragment_list),
+                        fragment_batch_size,
+                        fragment_batch_num,
+                    )
+                )
 
                 for i in range(0, len(fragment_list), fragment_batch_size):
                     s_i, e_i = i, min(i + fragment_batch_size, len(fragment_list))
+                    fragment_batch_idx = i // fragment_batch_size + 1
                     input_dict = collate_fn(fragment_list[s_i:e_i])
 
                     for key in input_dict.keys():
@@ -231,7 +248,7 @@ class SemSegTester(TesterBase):
                             pred_part = F.softmax(pred_part, -1)
 
                             bs = 0
-                            for be in input_dict["offset"]:
+                            for be in input_dict["offset"].tolist():
                                 pred[idx_part[bs:be], :] += pred_part[bs:be]
                                 bs = be
                     finally:
@@ -241,16 +258,24 @@ class SemSegTester(TesterBase):
                         if self.cfg.empty_cache:
                             torch.cuda.empty_cache()
 
-                    logger.info(
-                        "Test: {}/{}-{data_name}, Batch: {batch_idx}/{batch_num}, Points: {npts}".format(
-                            idx + 1,
-                            len(self.test_loader),
-                            data_name=data_name,
-                            batch_idx=e_i,
-                            batch_num=len(fragment_list),
-                            npts=n_fragment_points,
+                    if (
+                        fragment_batch_idx == 1
+                        or fragment_batch_idx % fragment_log_interval == 0
+                        or e_i == len(fragment_list)
+                    ):
+                        logger.info(
+                            "Test: {}/{}-{data_name}, Batch: {batch_idx}/{batch_num}, "
+                            "Fragments: {fragment_end}/{fragment_num}, Points: {npts}".format(
+                                idx + 1,
+                                len(self.test_loader),
+                                data_name=data_name,
+                                batch_idx=fragment_batch_idx,
+                                batch_num=fragment_batch_num,
+                                fragment_end=e_i,
+                                fragment_num=len(fragment_list),
+                                npts=n_fragment_points,
+                            )
                         )
-                    )
                 # #原来的代码
                 # pred = torch.zeros((segment.size, self.cfg.data.num_classes)).cuda()
                 # for i in range(len(fragment_list)):

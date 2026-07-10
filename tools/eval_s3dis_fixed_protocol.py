@@ -36,7 +36,7 @@ from tools.s3dis_fixed_protocol import (  # noqa: E402
 
 
 DEFAULT_MANIFEST = "configs/s3dis/eval/kpconvx_fixed_protocol_v1.json"
-DEFAULT_OUTPUT = "exp/s3dis/kpconvx-fixed-protocol-v1"
+DEFAULT_OUTPUT = "exp/fixed_protocol/results/kpconvx-fixed-protocol-v1"
 
 
 def parse_args():
@@ -60,7 +60,15 @@ def parse_args():
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT)
     parser.add_argument("--point-max", type=int, default=60000)
     parser.add_argument("--fallback-point-max", type=int, default=40000)
-    parser.add_argument("--num-worker-test", type=int, default=2)
+    parser.add_argument("--num-worker-test", type=int, default=6)
+    parser.add_argument("--fragment-batch-size-test", type=int, default=4)
+    parser.add_argument(
+        "--fallback-fragment-batch-sizes",
+        type=int,
+        nargs="*",
+        default=(2, 1),
+    )
+    parser.add_argument("--fragment-log-interval-test", type=int, default=10)
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--selected-family", default=None)
     parser.add_argument("--overwrite", action="store_true")
@@ -101,7 +109,8 @@ def configure_worker_cfg(args):
     cfg.resume = False
     cfg.evaluate = True
     cfg.batch_size_test = 1
-    cfg.fragment_batch_size_test = 1
+    cfg.fragment_batch_size_test = max(int(args.fragment_batch_size_test), 1)
+    cfg.fragment_log_interval_test = max(int(args.fragment_log_interval_test), 1)
     cfg.num_worker_test = max(int(args.num_worker_test), 0)
     cfg.num_worker_test_per_gpu = max(int(args.num_worker_test), 0)
     cfg.empty_cache = False
@@ -206,6 +215,14 @@ def local_inventory(args):
             exp_root=str(Path(args.exp_root).resolve()),
             requested_point_max=args.point_max,
             fallback_point_max=args.fallback_point_max,
+            requested_fragment_batch_size=max(
+                int(args.fragment_batch_size_test), 1
+            ),
+            fallback_fragment_batch_sizes=fragment_batch_candidates(
+                args.fragment_batch_size_test,
+                args.fallback_fragment_batch_sizes,
+            )[1:],
+            num_worker_test=max(int(args.num_worker_test), 0),
             screen_protocol="identity",
             tta_protocol="tta13",
             screen_expected_checkpoints=14,
@@ -227,8 +244,21 @@ def local_inventory(args):
     return manifest, entries, missing
 
 
-def worker_command(args, entry, output_dir, protocol, point_max, room_filter=None):
-    metadata = expected_run_metadata(entry, protocol, point_max)
+def worker_command(
+    args,
+    entry,
+    output_dir,
+    protocol,
+    point_max,
+    fragment_batch_size_test,
+    room_filter=None,
+):
+    metadata = expected_run_metadata(
+        entry,
+        protocol,
+        point_max,
+        fragment_batch_size_test,
+    )
     metadata_path = output_dir / "expected_run_meta.json"
     atomic_write_json(metadata_path, metadata)
     command = [
@@ -247,6 +277,10 @@ def worker_command(args, entry, output_dir, protocol, point_max, room_filter=Non
         str(point_max),
         "--num-worker-test",
         str(args.num_worker_test),
+        "--fragment-batch-size-test",
+        str(fragment_batch_size_test),
+        "--fragment-log-interval-test",
+        str(args.fragment_log_interval_test),
         "--run-meta-json",
         str(metadata_path),
     ]
@@ -259,9 +293,22 @@ def worker_command(args, entry, output_dir, protocol, point_max, room_filter=Non
     return command, metadata
 
 
-def run_entry(args, entry, stage_dir, protocol, point_max, room_filter=None):
+def run_entry(
+    args,
+    entry,
+    stage_dir,
+    protocol,
+    point_max,
+    fragment_batch_size_test,
+    room_filter=None,
+):
     output_dir = entry_output_dir(stage_dir, entry)
-    expected = expected_run_metadata(entry, protocol, point_max)
+    expected = expected_run_metadata(
+        entry,
+        protocol,
+        point_max,
+        fragment_batch_size_test,
+    )
     if metadata_matches(output_dir, expected) and not args.overwrite:
         print(f"SKIP completed: {output_dir}")
         return True
@@ -287,6 +334,7 @@ def run_entry(args, entry, stage_dir, protocol, point_max, room_filter=None):
         output_dir,
         protocol,
         point_max,
+        fragment_batch_size_test,
         room_filter=room_filter,
     )
     log_path = output_dir / "worker.log"
@@ -320,36 +368,69 @@ def find_entry(entries, family, checkpoint_kind):
     return matches[0]
 
 
+def fragment_batch_candidates(primary, fallbacks):
+    candidates = []
+    for value in (primary, *fallbacks):
+        value = max(int(value), 1)
+        if value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
 def run_preflight(args, entries):
     entry = find_entry(entries, "v17", "best")
     root = Path(args.output_root) / "preflight"
     for point_max in (args.point_max, args.fallback_point_max):
-        stage_dir = root / str(point_max)
-        success = run_entry(
-            args,
-            entry,
-            stage_dir,
-            protocol="identity",
-            point_max=point_max,
-            room_filter=args.preflight_room,
-        )
-        if success:
-            decision = dict(
-                protocol_version=PROTOCOL_VERSION,
-                selected_point_max=point_max,
-                room=args.preflight_room,
-                checkpoint=entry,
+        for fragment_batch_size in fragment_batch_candidates(
+            args.fragment_batch_size_test,
+            args.fallback_fragment_batch_sizes,
+        ):
+            stage_dir = root / f"point-{point_max}_batch-{fragment_batch_size}"
+            success = run_entry(
+                args,
+                entry,
+                stage_dir,
+                protocol="identity",
+                point_max=point_max,
+                fragment_batch_size_test=fragment_batch_size,
+                room_filter=args.preflight_room,
             )
-            atomic_write_json(Path(args.output_root) / "point_max_decision.json", decision)
-            print(f"Preflight selected point_max={point_max}")
-            return point_max
-        log_path = entry_output_dir(stage_dir, entry) / "worker.log"
-        log_text = log_path.read_text(encoding="utf-8", errors="ignore")
-        is_oom = "out of memory" in log_text.lower() or "cuda oom" in log_text.lower()
-        if not is_oom:
-            raise RuntimeError(f"Preflight failed for a non-OOM reason: {log_path}")
-        print(f"OOM at point_max={point_max}; trying the protocol-wide fallback")
-    raise RuntimeError("Both preflight point limits failed")
+            if success:
+                decision = dict(
+                    protocol_version=PROTOCOL_VERSION,
+                    selected_point_max=point_max,
+                    selected_fragment_batch_size=fragment_batch_size,
+                    num_worker_test=max(int(args.num_worker_test), 0),
+                    room=args.preflight_room,
+                    checkpoint=entry,
+                )
+                atomic_write_json(
+                    Path(args.output_root) / "point_max_decision.json", decision
+                )
+                print(
+                    "Preflight selected point_max={}, fragment_batch_size={}".format(
+                        point_max,
+                        fragment_batch_size,
+                    )
+                )
+                return decision
+            log_path = entry_output_dir(stage_dir, entry) / "worker.log"
+            log_text = log_path.read_text(encoding="utf-8", errors="ignore")
+            is_oom = (
+                "out of memory" in log_text.lower()
+                or "cuda oom" in log_text.lower()
+            )
+            if not is_oom:
+                raise RuntimeError(
+                    f"Preflight failed for a non-OOM reason: {log_path}"
+                )
+            print(
+                "OOM at point_max={}, fragment_batch_size={}; trying fallback".format(
+                    point_max,
+                    fragment_batch_size,
+                )
+            )
+    raise RuntimeError("All preflight point-limit/batch-size combinations failed")
 
 
 def expected_result_keys(manifest, families=None):
@@ -380,6 +461,9 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
     protocol_versions = {row["protocol_version"] for row in checkpoint_rows}
     protocols = {row["protocol"] for row in checkpoint_rows}
     point_limits = {int(row["point_max"]) for row in checkpoint_rows}
+    fragment_batch_sizes = {
+        int(row.get("fragment_batch_size_test", 1)) for row in checkpoint_rows
+    }
     expected_protocol = "identity" if stage_name == "screen" else "tta13"
     if protocol_versions != {PROTOCOL_VERSION}:
         raise RuntimeError(f"Mixed protocol versions in {stage_dir}: {protocol_versions}")
@@ -387,6 +471,10 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
         raise RuntimeError(f"Mixed protocols in {stage_dir}: {protocols}")
     if len(point_limits) != 1:
         raise RuntimeError(f"Mixed point_max values in {stage_dir}: {point_limits}")
+    if len(fragment_batch_sizes) != 1:
+        raise RuntimeError(
+            f"Mixed fragment batch sizes in {stage_dir}: {fragment_batch_sizes}"
+        )
     family_rows = rank_families(
         checkpoint_rows,
         baseline_family=manifest.get("baseline_family", "baseline"),
@@ -490,20 +578,25 @@ def merge_server_results(args, manifest):
     copied = 0
     skipped = 0
 
-    point_max_decision = None
+    resource_decision = None
     for input_root_value in args.merge_input:
         input_root = Path(input_root_value)
         decision_path = input_root / "point_max_decision.json"
         if decision_path.is_file():
             with decision_path.open("r", encoding="utf-8") as f:
                 current_decision = json.load(f)
-            current_value = current_decision.get("selected_point_max")
-            if point_max_decision is None:
-                point_max_decision = current_value
-            elif current_value != point_max_decision:
+            current_value = dict(
+                selected_point_max=current_decision.get("selected_point_max"),
+                selected_fragment_batch_size=current_decision.get(
+                    "selected_fragment_batch_size", 1
+                ),
+            )
+            if resource_decision is None:
+                resource_decision = current_value
+            elif current_value != resource_decision:
                 raise RuntimeError(
-                    "Server outputs used different point_max decisions: "
-                    f"{point_max_decision} vs {current_value}"
+                    "Server outputs used different resource decisions: "
+                    f"{resource_decision} vs {current_value}"
                 )
 
         for stage_name in ("screen", "tta13"):
@@ -538,12 +631,12 @@ def merge_server_results(args, manifest):
                         shutil.copy2(source_file, destination_dir / filename)
                 copied += 1
 
-    if point_max_decision is not None:
+    if resource_decision is not None:
         atomic_write_json(
             output_root / "point_max_decision.json",
             dict(
                 protocol_version=PROTOCOL_VERSION,
-                selected_point_max=point_max_decision,
+                **resource_decision,
                 merged_from=[str(Path(path)) for path in args.merge_input],
             ),
         )
@@ -594,11 +687,25 @@ def bundle_compact_results(args):
     return bundle_path
 
 
-def run_stage_entries(args, entries, stage_name, protocol, point_max):
+def run_stage_entries(
+    args,
+    entries,
+    stage_name,
+    protocol,
+    point_max,
+    fragment_batch_size_test,
+):
     stage_dir = Path(args.output_root) / stage_name
     failures = []
     for entry in entries:
-        if not run_entry(args, entry, stage_dir, protocol, point_max):
+        if not run_entry(
+            args,
+            entry,
+            stage_dir,
+            protocol,
+            point_max,
+            fragment_batch_size_test,
+        ):
             failures.append(entry)
     if failures:
         atomic_write_json(stage_dir / "failed_entries.json", failures)
@@ -655,6 +762,7 @@ def main():
             stage_name="screen",
             protocol="identity",
             point_max=args.point_max,
+            fragment_batch_size_test=args.fragment_batch_size_test,
         )
         # A local shard may be incomplete; summary is still useful for diagnostics.
         screen_completeness = summarize_stage(args, manifest, "screen")
@@ -682,6 +790,7 @@ def main():
             stage_name="tta13",
             protocol="tta13",
             point_max=args.point_max,
+            fragment_batch_size_test=args.fragment_batch_size_test,
         )
         summarize_stage(args, manifest, "tta13", selected_family)
     return 0

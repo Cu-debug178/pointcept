@@ -13,10 +13,14 @@ from tools.audit_v17_neighbor_compatibility import (
     roc_auc,
     spearman,
 )
-from tools.eval_s3dis_fixed_protocol import merge_server_results
+from tools.eval_s3dis_fixed_protocol import (
+    fragment_batch_candidates,
+    merge_server_results,
+)
 from tools.s3dis_fixed_protocol import (
     PROTOCOL_VERSION,
     build_checkpoint_entries,
+    expected_run_metadata,
     identity_augmentations,
     load_manifest,
     metadata_matches,
@@ -31,6 +35,10 @@ class FixedProtocolTest(unittest.TestCase):
     def test_augmentation_counts(self):
         self.assertEqual(len(identity_augmentations()), 1)
         self.assertEqual(len(tta13_augmentations()), 13)
+
+    def test_fragment_batch_candidates_are_unique_and_ordered(self):
+        self.assertEqual(fragment_batch_candidates(4, [2, 1, 2]), [4, 2, 1])
+        self.assertEqual(fragment_batch_candidates(0, []), [1])
 
     def test_metrics_from_counts(self):
         metrics = metrics_from_counts(
@@ -94,6 +102,26 @@ class FixedProtocolTest(unittest.TestCase):
             )
             self.assertTrue(metadata_matches(output, expected))
 
+    def test_fragment_batch_size_is_part_of_resume_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.py"
+            checkpoint = root / "model_best.pth"
+            config.write_text("x = 1\n", encoding="utf-8")
+            checkpoint.write_bytes(b"checkpoint")
+            entry = dict(
+                family="v17",
+                run_id="run",
+                seed=1,
+                checkpoint_kind="best",
+                config_path=str(config),
+                weight_path=str(checkpoint),
+            )
+            batch_four = expected_run_metadata(entry, "identity", 60000, 4)
+            batch_one = expected_run_metadata(entry, "identity", 60000, 1)
+            self.assertEqual(batch_four["fragment_batch_size_test"], 4)
+            self.assertNotEqual(batch_four, batch_one)
+
     def test_two_server_compact_merge(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -123,6 +151,7 @@ class FixedProtocolTest(unittest.TestCase):
                     protocol_version=PROTOCOL_VERSION,
                     protocol="identity",
                     point_max=60000,
+                    fragment_batch_size_test=4,
                     family=family,
                     run_id=run_id,
                     seed=None if family == "baseline" else 1,

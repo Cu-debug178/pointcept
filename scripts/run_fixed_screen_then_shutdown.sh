@@ -6,6 +6,7 @@ SERVER_ID="${1:?Usage: $0 server-a 60000 4 6}"
 POINT_MAX="${2:-60000}"
 FRAGMENT_BATCH_SIZE="${3:-4}"
 NUM_WORKERS="${4:-6}"
+AUTO_SHUTDOWN="${ENABLE_AUTO_SHUTDOWN:-0}"
 PROJECT="${POINTCEPT_ROOT:-/root/autodl-tmp/Pointcept}"
 EXP_ROOT="${POINTCEPT_EXP_ROOT:-$PROJECT/exp}"
 FIXED_ROOT="${POINTCEPT_FIXED_ROOT:-$EXP_ROOT/fixed_protocol}"
@@ -38,6 +39,7 @@ rm -f "$CANCEL_FILE"
   echo "point_max: ${POINT_MAX}"
   echo "fragment_batch_size: ${FRAGMENT_BATCH_SIZE}"
   echo "num_workers: ${NUM_WORKERS}"
+  echo "auto_shutdown: ${AUTO_SHUTDOWN}"
   if source "$PROJECT/activate_env.sh"; then
     python tools/eval_s3dis_fixed_protocol.py \
       --stage screen \
@@ -64,11 +66,20 @@ fi
   echo "$(date '+%F %T') screen 结束，退出码: ${EXIT_CODE}"
   echo "运行日志: ${RUN_LOG}"
   echo "结果包: ${BUNDLE_PATH}"
+} | tee -a "$STATUS_LOG"
+
+sync
+if [ "$AUTO_SHUTDOWN" != "1" ]; then
+  echo "$(date '+%F %T') 自动关机未启用，服务器保持运行" \
+    | tee -a "$STATUS_LOG"
+  exit "$EXIT_CODE"
+fi
+
+{
   echo "无论成功或失败，300秒后关机"
   echo "取消命令: touch ${CANCEL_FILE}"
 } | tee -a "$STATUS_LOG"
 
-sync
 for _ in $(seq 1 30); do
   if [ -f "$CANCEL_FILE" ]; then
     echo "$(date '+%F %T') 已取消自动关机" | tee -a "$STATUS_LOG"

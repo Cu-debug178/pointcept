@@ -64,7 +64,7 @@ exp/fixed_protocol/results/kpconvx-fixed-server-a/point_max_decision.json
 
 ```bash
 nohup bash scripts/run_fixed_eval_safe.sh \
-  server-a screen 60000 4 6 \
+  server-a screen 60000 4 6 best \
   > exp/fixed_protocol/logs/bootstrap_screen_server-a.log 2>&1 < /dev/null &
 ```
 
@@ -72,7 +72,7 @@ nohup bash scripts/run_fixed_eval_safe.sh \
 
 ```bash
 nohup bash scripts/run_fixed_eval_safe.sh \
-  server-b screen 60000 4 6 \
+  server-b screen 60000 4 6 best \
   > exp/fixed_protocol/logs/bootstrap_screen_server-b.log 2>&1 < /dev/null &
 ```
 
@@ -84,6 +84,8 @@ cat exp/fixed_protocol/fixed_screen_server-a.pid
 ```
 
 正常退出后会生成 `.exit` 文件，内容 `0` 表示成功。若实例被平台硬停，心跳会中断且通常不会生成 `.exit` 文件，可与脚本正常失败区分。
+
+第一轮默认只评估 7 个 `model_best.pth`。需要补做 last 时，把命令最后的 `best` 改为 `last`；需要完整复评时使用 `all`。
 
 ## 4. 下载结果
 
@@ -105,6 +107,7 @@ Expand-Archive server-b-compact.zip exp/fixed-server-b -Force
 python tools/eval_s3dis_fixed_protocol.py `
   --stage merge `
   --manifest configs/s3dis/eval/kpconvx_fixed_protocol_v1.json `
+  --checkpoint-kinds best `
   --output-root exp/fixed-protocol-merged `
   --merge-input exp/fixed-server-a exp/fixed-server-b
 ```

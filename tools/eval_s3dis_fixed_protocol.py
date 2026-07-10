@@ -71,6 +71,13 @@ def parse_args():
     parser.add_argument("--fragment-log-interval-test", type=int, default=10)
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--selected-family", default=None)
+    parser.add_argument(
+        "--checkpoint-kinds",
+        nargs="+",
+        choices=("best", "last"),
+        default=None,
+        help="Evaluate only the selected checkpoint kinds; defaults to the manifest.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--strict-local", action="store_true")
     parser.add_argument("--max-rooms", type=int, default=None)
@@ -208,6 +215,17 @@ def local_inventory(args):
         args.exp_root,
         allow_missing=not args.strict_local,
     )
+    checkpoint_kinds = getattr(args, "checkpoint_kinds", None)
+    if checkpoint_kinds:
+        selected_kinds = set(checkpoint_kinds)
+        entries = [
+            entry for entry in entries
+            if entry["checkpoint_kind"] in selected_kinds
+        ]
+        missing = [
+            entry for entry in missing
+            if entry["checkpoint_kind"] in selected_kinds
+        ]
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(output_root / "available_entries.json", entries)
@@ -228,9 +246,17 @@ def local_inventory(args):
                 args.fallback_fragment_batch_sizes,
             )[1:],
             num_worker_test=max(int(args.num_worker_test), 0),
+            checkpoint_kinds=(
+                list(checkpoint_kinds) if checkpoint_kinds else ["best", "last"]
+            ),
             screen_protocol="identity",
             tta_protocol="tta13",
-            screen_expected_checkpoints=14,
+            screen_expected_checkpoints=len(
+                expected_result_keys(
+                    manifest,
+                    checkpoint_kinds=checkpoint_kinds,
+                )
+            ),
             tta_family_limit=1,
             available_checkpoints=len(entries),
             missing_checkpoints=len(missing),
@@ -438,12 +464,15 @@ def run_preflight(args, entries):
     raise RuntimeError("All preflight point-limit/batch-size combinations failed")
 
 
-def expected_result_keys(manifest, families=None):
+def expected_result_keys(manifest, families=None, checkpoint_kinds=None):
     keys = set()
+    selected_kinds = set(checkpoint_kinds) if checkpoint_kinds else None
     for run in manifest["runs"]:
         if families is not None and run["family"] not in families:
             continue
         for checkpoint_kind in run.get("checkpoints", ["best", "last"]):
+            if selected_kinds is not None and checkpoint_kind not in selected_kinds:
+                continue
             keys.add((run["family"], run["run_id"], run.get("seed"), checkpoint_kind))
     return keys
 
@@ -490,8 +519,12 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
     write_csv(stage_dir / "family_ranking.csv", family_rows)
 
     actual_keys = {entry_key(entry) for entry in entries}
+    checkpoint_kinds = getattr(args, "checkpoint_kinds", None)
     if stage_name == "screen":
-        expected_keys = expected_result_keys(manifest)
+        expected_keys = expected_result_keys(
+            manifest,
+            checkpoint_kinds=checkpoint_kinds,
+        )
         missing_keys = sorted(expected_keys - actual_keys, key=str)
         unexpected_keys = sorted(actual_keys - expected_keys, key=str)
         if not missing_keys and not unexpected_keys:
@@ -522,6 +555,7 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
         expected_keys = expected_result_keys(
             manifest,
             families={manifest.get("baseline_family", "baseline"), selected_family},
+            checkpoint_kinds=checkpoint_kinds,
         )
         missing_keys = sorted(expected_keys - actual_keys, key=str)
         unexpected_keys = sorted(actual_keys - expected_keys, key=str)

@@ -14,6 +14,7 @@ from tools.audit_v17_neighbor_compatibility import (
     spearman,
 )
 from tools.eval_s3dis_fixed_protocol import (
+    expected_result_keys,
     fragment_batch_candidates,
     merge_server_results,
 )
@@ -48,6 +49,19 @@ class FixedProtocolTest(unittest.TestCase):
     def test_fragment_batch_candidates_are_unique_and_ordered(self):
         self.assertEqual(fragment_batch_candidates(4, [2, 1, 2]), [4, 2, 1])
         self.assertEqual(fragment_batch_candidates(0, []), [1])
+
+    def test_expected_result_keys_can_select_best_only(self):
+        manifest = dict(
+            runs=[
+                dict(family="baseline", run_id="base", checkpoints=["best", "last"]),
+                dict(family="v17", run_id="v17", checkpoints=["best", "last"]),
+            ]
+        )
+        all_keys = expected_result_keys(manifest)
+        best_keys = expected_result_keys(manifest, checkpoint_kinds=["best"])
+        self.assertEqual(len(all_keys), 4)
+        self.assertEqual(len(best_keys), 2)
+        self.assertEqual({key[-1] for key in best_keys}, {"best"})
 
     def test_metrics_from_counts(self):
         metrics = metrics_from_counts(

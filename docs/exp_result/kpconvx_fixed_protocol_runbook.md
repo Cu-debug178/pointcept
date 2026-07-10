@@ -77,22 +77,12 @@ tail -f "$LOG"
 
 服务器 B 使用 `kpconvx-fixed-server-b`。已有完整结果会跳过；失败后的同协议结果可以继续。改变协议或 point limit 时必须显式加 `--overwrite`，防止复用旧预测缓存。
 
-使用仓库内的包装脚本运行 screen。为避免意外关机，自动关机默认关闭；未显式设置 `ENABLE_AUTO_SHUTDOWN=1` 时，任务结束后只保存日志和结果，服务器保持运行：
-
-脚本启动时会取消旧版本遗留的预约关机，并通过 `flock` 禁止同一 `server-id` 重复运行。评估 Python 进程保持前台同步执行，只有其退出并完成结果打包后才开始 300 秒关机倒计时。
+使用仓库内的无关机包装脚本运行 screen。脚本只执行评估、保存日志和打包结果，成功或失败后服务器都保持运行。启动时会取消旧版本遗留的预约关机，并通过 `flock` 禁止同一 `server-id` 重复运行。
 
 ```bash
-chmod +x scripts/run_fixed_screen_then_shutdown.sh
+chmod +x scripts/run_fixed_screen.sh
 mkdir -p exp/fixed_protocol/logs
-nohup bash scripts/run_fixed_screen_then_shutdown.sh server-a 60000 4 6 \
-  > exp/fixed_protocol/logs/fixed_screen_server-a_launcher.log 2>&1 &
-```
-
-只有确认关机链路没有其他问题后，才使用：
-
-```bash
-ENABLE_AUTO_SHUTDOWN=1 nohup bash \
-  scripts/run_fixed_screen_then_shutdown.sh server-a 60000 4 6 \
+nohup bash scripts/run_fixed_screen.sh server-a 60000 4 6 \
   > exp/fixed_protocol/logs/fixed_screen_server-a_launcher.log 2>&1 &
 ```
 

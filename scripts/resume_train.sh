@@ -97,17 +97,20 @@ echo "=========================================="
 # --- 执行续训命令 ---
 ulimit -n 65536
 
+TASK_EXIT=0
 $PYTHON "$CODE_DIR"/tools/train.py \
   --config-file "$CONFIG_DIR" \
   --num-gpus "$NUM_GPU" \
   --num-machines "$NUM_MACHINE" \
   --machine-rank 0 \
   --dist-url "$DIST_URL" \
-  --options save_path="$EXP_DIR" resume=true weight="$WEIGHT"
+  --options save_path="$EXP_DIR" resume=true weight="$WEIGHT" || TASK_EXIT=$?
 
-# --- 训练完成后自动关闭服务器 ---
 echo "=========================================="
-echo "训练已完成，5分钟后自动关闭服务器..."
+if [ "$TASK_EXIT" -eq 0 ]; then
+  echo "训练已完成，自动关机已禁用"
+else
+  echo "训练失败，退出码: $TASK_EXIT；自动关机已禁用"
+fi
 echo "=========================================="
-sleep 300
-shutdown -h now
+exit "$TASK_EXIT"

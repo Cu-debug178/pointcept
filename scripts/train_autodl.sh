@@ -96,26 +96,29 @@ echo " =========> RUN TASK <========="
 ulimit -n 65536
 if [ "${WEIGHT}" = "None" ]
 then
+    TASK_EXIT=0
     $PYTHON "$CODE_DIR"/tools/$TRAIN_CODE \
     --config-file "$CONFIG_DIR" \
     --num-gpus "$NUM_GPU" \
     --num-machines "$NUM_MACHINE" \
     --machine-rank ${SLURM_NODEID:-0} \
     --dist-url ${DIST_URL} \
-    --options save_path="$EXP_DIR" || (echo "训练失败，立即关机"; shutdown -h now)
+    --options save_path="$EXP_DIR" || TASK_EXIT=$?
 else
+    TASK_EXIT=0
     $PYTHON "$CODE_DIR"/tools/$TRAIN_CODE \
     --config-file "$CONFIG_DIR" \
     --num-gpus "$NUM_GPU" \
     --num-machines "$NUM_MACHINE" \
     --machine-rank ${SLURM_NODEID:-0} \
     --dist-url ${DIST_URL} \
-    --options save_path="$EXP_DIR" resume="$RESUME" weight="$WEIGHT" || (echo "训练失败，立即关机"; shutdown -h now)
+    --options save_path="$EXP_DIR" resume="$RESUME" weight="$WEIGHT" || TASK_EXIT=$?
 fi
 
-# 训练成功完成，5分钟后关机
-echo "训练成功完成，5分钟后自动关机..."
-echo "如果需要取消关机，请执行: shutdown -c"
-sleep 10
-shutdown -h now
+if [ "$TASK_EXIT" -eq 0 ]; then
+    echo "训练成功完成，自动关机已禁用"
+else
+    echo "训练失败，退出码: $TASK_EXIT；自动关机已禁用"
+fi
+exit "$TASK_EXIT"
 

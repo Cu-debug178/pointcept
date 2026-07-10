@@ -64,51 +64,15 @@ tail -f "$LOG"
 
 服务器 B 使用 `kpconvx-fixed-server-b`。已有完整结果会跳过；失败后的同协议结果可以继续。改变协议或 point limit 时必须显式加 `--overwrite`，防止复用旧预测缓存。
 
-如需任务无论成功或失败都在 5 分钟后关机，使用外层包装脚本，不要在激活环境前启用 `set -u`：
+如需任务无论成功或失败都在 5 分钟后关机，使用仓库内的包装脚本。脚本不会在激活环境前启用 `set -u`，因此不会再次触发 `MKL_INTERFACE_LAYER: unbound variable`：
 
 ```bash
-cat > run_fixed_screen_then_shutdown.sh <<'EOF'
-#!/usr/bin/env bash
-set -o pipefail
-
-SERVER_ID="server-a"
-POINT_MAX=60000
-PROJECT=/root/autodl-tmp/Pointcept
-RUN_LOG="$PROJECT/exp/fixed_screen_${SERVER_ID}_$(date +%Y%m%d_%H%M%S).log"
-STATUS_LOG="$PROJECT/exp/fixed_screen_${SERVER_ID}_shutdown_status.log"
-
-mkdir -p "$PROJECT/exp"
-cd "$PROJECT" || exit 2
-
-{
-  echo "$(date '+%F %T') 开始固定协议 screen: ${SERVER_ID}"
-  source "$PROJECT/activate_env.sh"
-  python tools/eval_s3dis_fixed_protocol.py \
-    --stage screen \
-    --exp-root exp \
-    --output-root "exp/s3dis/kpconvx-fixed-${SERVER_ID}" \
-    --point-max "$POINT_MAX" \
-    --num-worker-test 2
-} > "$RUN_LOG" 2>&1
-EXIT_CODE=$?
-
-{
-  echo "$(date '+%F %T') screen 结束，退出码: ${EXIT_CODE}"
-  echo "运行日志: ${RUN_LOG}"
-  echo "无论成功或失败，5分钟后关机；取消命令: shutdown -c"
-} | tee -a "$STATUS_LOG"
-
-sync
-shutdown -h +5
-exit "$EXIT_CODE"
-EOF
-
-chmod +x run_fixed_screen_then_shutdown.sh
-nohup bash run_fixed_screen_then_shutdown.sh \
+chmod +x scripts/run_fixed_screen_then_shutdown.sh
+nohup bash scripts/run_fixed_screen_then_shutdown.sh server-a 60000 \
   > exp/fixed_screen_server-a_launcher.log 2>&1 &
 ```
 
-服务器 B 只需把脚本中的 `SERVER_ID="server-a"` 改成 `SERVER_ID="server-b"`。正式启动前必须根据 v17 预检结果统一设置两台机器的 `POINT_MAX`。
+服务器 B 使用 `nohup bash scripts/run_fixed_screen_then_shutdown.sh server-b 60000 ...`。正式启动前必须根据 v17 预检结果统一设置两台机器的 `POINT_MAX`。
 
 ## 4. 生成小体积结果包
 

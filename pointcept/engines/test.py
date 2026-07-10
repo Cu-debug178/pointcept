@@ -411,6 +411,65 @@ class SemSegTester(TesterBase):
             mAcc = np.mean(accuracy_class)
             allAcc = sum(intersection) / (sum(target) + 1e-10)
 
+            class_metrics = []
+            for i in range(self.cfg.data.num_classes):
+                class_metrics.append(
+                    dict(
+                        index=i,
+                        name=self.cfg.data.names[i],
+                        intersection=int(intersection[i]),
+                        union=int(union[i]),
+                        target=int(target[i]),
+                        iou=float(iou_class[i]),
+                        accuracy=float(accuracy_class[i]),
+                    )
+                )
+
+            room_metrics = []
+            for room_name in sorted(record):
+                room_intersection = np.asarray(record[room_name]["intersection"])
+                room_union = np.asarray(record[room_name]["union"])
+                room_target = np.asarray(record[room_name]["target"])
+                room_iou_class = room_intersection / (room_union + 1e-10)
+                room_acc_class = room_intersection / (room_target + 1e-10)
+                present_mask = room_union > 0
+                room_metrics.append(
+                    dict(
+                        name=room_name,
+                        points=int(room_target.sum()),
+                        mIoU_present=(
+                            float(room_iou_class[present_mask].mean())
+                            if present_mask.any()
+                            else 0.0
+                        ),
+                        mIoU_all=float(room_iou_class.mean()),
+                        mAcc=float(room_acc_class.mean()),
+                        allAcc=float(
+                            room_intersection.sum() / (room_target.sum() + 1e-10)
+                        ),
+                        intersection=room_intersection.astype(np.int64).tolist(),
+                        union=room_union.astype(np.int64).tolist(),
+                        target=room_target.astype(np.int64).tolist(),
+                    )
+                )
+
+            metrics = dict(
+                mIoU=float(mIoU),
+                mAcc=float(mAcc),
+                allAcc=float(allAcc),
+                num_rooms=len(room_metrics),
+                classes=class_metrics,
+                rooms=room_metrics,
+            )
+
+            if bool(getattr(self.cfg.test, "export_metrics", False)):
+                metrics_path = os.path.join(self.cfg.save_path, "metrics.json")
+                metrics_tmp_path = metrics_path + ".tmp"
+                with open(metrics_tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(metrics, f, ensure_ascii=False, indent=2)
+                os.replace(metrics_tmp_path, metrics_path)
+                torch.save(record, os.path.join(save_path, "room_metrics.pth"))
+
             logger.info(
                 "Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}".format(
                     mIoU, mAcc, allAcc
@@ -426,6 +485,7 @@ class SemSegTester(TesterBase):
                     )
                 )
             logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
+            return metrics
 
     @staticmethod
     def collate_fn(batch):

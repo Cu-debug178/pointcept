@@ -1,76 +1,146 @@
 # KPConvX 改进实验总路线
 
-## 总路线
+更新时间：2026-07-10
 
-当前主线不是简单调参，而是从 KPConvX baseline 出发，逐步尝试：
+## 当前总判断
 
-`局部动态半径 DA-Radius -> 全局上下文 SGCA -> PTv3-inspired 双注意力 -> 边界风险控制 -> v16 内化式 DA-stat + 轻量全局 context mixer`
+当前还没有一个改进在稳定性和多次实验上超过原始 KPConvX baseline。已经得到的最重要结论不是“某个参数最好”，而是逐步排除了几类看似合理、实际没有形成净收益的路线：
 
-整体认知已经从“外挂模块叠加”转向“把局部几何统计内化进 KPConvX 主干，再谨慎加入可忽略的深层全局上下文”。
+`真实 DA-Radius 改图 -> 简单全局上下文 -> PTv3-inspired 重型双分支 -> DA-meta 条件器 -> hard controlled support -> dual-support residual -> inference alpha 诊断`
+
+截至 v17，证据支持以下判断：
+
+- baseline best mIoU 为 `0.7159`，仍是最强可信参考。
+- v13 真实 CUDA DA-Radius best 为 `0.7096`，产生过结构类正信号，但没有稳定超过 baseline。
+- v13 保存代码复跑并把 `clip_grad` 放宽到 2.0 后 best 为 `0.7030`，说明单改梯度裁剪不能突破。
+- v13b 更保守半径、更多候选邻居和 `clip_grad=2.0` 的组合 best 为 `0.6841`，属于策略失败。
+- v14 decoder-SGCA best 为 `0.7004`，证明 decoder/head 前融合比 encoder 强融合安全，但简单全局上下文没有形成稳定收益。
+- v15 stage234 边界门控双注意力 best 约 `0.5971`；边界辅助损失会下降，但主分割出现负迁移。
+- v16-local 不改图、只注入 DA-meta，best 为 `0.6977`；局部统计能够被主干使用，但不足以复现 v13 的结构类收益。
+- v16b controlled support 三个 seed 的 best 为 `0.7161 / 0.7032 / 0.7000`，均值约 `0.7064`；唯一超过 baseline 的结果只高 `0.0002`，属于高方差峰值，不能作为稳定提升。
+- v17 dual-support best 为 `0.7084`，训练约 `44.52h`，比 baseline 慢约 `1.85x`；没有带来净收益。
+- v17 inference alpha sweep 中，`alpha=0~1` 的 mIoU 差异不超过 `0.0008`。这否定了“只要把推理期 residual 调弱就能明显修复 v17”的推测。
+
+因此，下一步不能再把已有路线换名重跑，也不能默认“选择性 support”一定正确。需要先让新的外部判断回答：alpha 几乎无效究竟表示 support 分支没有价值，还是训练期已经让主干与该分支共同适配，导致推理期开关无法分离训练历史。
 
 ## 版本时间线
 
-| 阶段 | 版本 | 改进内容 | 目的/结论 |
+| 阶段 | 版本/实验 | 核心变化 | 结果与结论 |
 | --- | --- | --- | --- |
-| Baseline | 原始 KPConvX | 标准 KPConvX，Area5 S3DIS | best mIoU 约 0.7159，目前仍是最强基线 |
-| 初始混合版 | sgca-da-refine-v1m1 | DA-Kernel、SGCA、refine 等模块的早期综合框架 | 变量太多，后续开始拆成单模块消融 |
-| DA-Radius 初探 | v1 | CUDA DA-Radius，较保守半径 `(0.9, 1.25)`，stage 2/3/4 | 验证 CUDA 动态半径可跑 |
-| DA-Radius 平衡版 | v2 | CUDA DA-Radius，范围 `(0.85, 1.45)`，强度 0.75 | 半径动态更明显 |
-| DA-Radius 强版 | v3 | CUDA DA-Radius 扩到 stage 2/3/4/5，范围 `(0.8, 1.6)` | 太激进，作为强扰动测试 |
-| Torch 参考版 | v4 | Torch backend DA-Radius，范围 `(0.9, 1.35)` | 用 torch mask 路径对照 CUDA |
-| DA-Kernel 消融 | v5 | 只开 DA-Kernel，关 DA-Radius / global / refine | 判断 kernel scaling 本身是否有收益 |
-| DA-Radius 消融 | v6 | 只开 DA-Radius torch，关 global / refine | 判断 radius 单模块效果 |
-| Global only | v7 | 只开 serialized global context，stage 4/5 | 判断全局上下文本身是否有收益 |
-| Radius + Global | v8 | CUDA DA-Radius + global context | 测局部半径和全局上下文是否互补 |
-| Kernel + Radius + Global | v9 | DA-Kernel + DA-Radius + global context | 早期“全模块组合”尝试 |
-| Influence 消融 | v10 | 基于 v9，`kp_influence="constant"` | 看 KPConvX influence 类型影响 |
-| Influence 消融 | v11 | 基于 v9，`kp_influence="linear"` | 与 v10 对照 |
-| CUDA/Torch 对照 | v12 | torch DA-Radius mask，stage 2/3/4，关 global/refine | 为 v13 CUDA 版本做干净参照 |
-| 稳定 DA-Radius 主线 | v13 | CUDA DA-Radius，只在 stage 3/4，范围更保守，`apply_block_mask=False` | best mIoU 0.7096；整体略低 baseline，但 board/window/sofa/beam 等结构类有价值信号 |
-| v13 参数修正 | v13b | `clip_grad=2.0`，neighbor limit 提到 24，半径强度降到 0.35 | best mIoU 0.6841，失败；说明“更保守半径 + 更大邻居上限”没有转化为收益 |
-| 旧 v14 | encoder-SGCA | 在 encoder stage 4/5 直接融合 SGCA | 约 90 epoch 提前止损，best 约 0.5883；说明 encoder 强融合会污染主干/skip feature |
-| 新 v14 | decoder-SGCA | SGCA 改到 decoder/head 前，`gamma=0` 初始化 | best mIoU 0.7004；明显好于旧 v14，但仍低于 v13/baseline，说明融合位置对了，但 SGCA 信息质量不够 |
-| v15 基础版 | dual-attention | PTv3-inspired serialized patch，全局 stage 3/4，decoder fusion | 尝试更接近 PTv3 的全局 token bank |
-| v15 4090D | dual-attention-4090d | 增大 token 上限，适配 4090D 显存 | 工程适配版本 |
-| v15 stage234 | boundary-gated dual attention | 全局 stage 2/3/4 + boundary risk gate + boundary loss + refine | best 约 0.5971，失败；boundary loss 会下降，但 segmentation 没提升，判断为负迁移/结构失配 |
-| v16 初版 | DA-stat GC | 新建 KPConvXV16，DA-Radius 改成局部统计条件器，shell-aware kernel bias，同时打开 decoder 轻量 GC mixer | best 约 0.5916，失败；说明第一版同时打开 shell bias + GC mixer 仍然过强，不能作为主线结论 |
-| v16-local | DA-stat local | 不改邻域图，只把 DA-Radius 统计作为 detached DA-meta 注入 KPConvX block；stage 3/4，channel-wise bias，关闭 GC | best 约 0.6977；明显比失败的 v16 初版稳定，说明“局部几何统计内化进 kernel attention”有一定价值，但还没有复现 v13 的动态半径收益 |
-| v16b 对照 | superset-only | 仅增大 stage 3/4 的候选邻居上限，不启用 support mask | 用来判断收益是否只是来自更大的候选邻域，而不是 adaptive support 本身 |
-| v16b 主实验 | controlled support | 在 v16-local 上加入 stage 3/4 受控 support mask：静态 superset graph + block 内 effective-radius mask + warmup/ramp | 当前局部主线；目标是保留 v13 的结构类收益，同时避免 v13b 那种保守半径削弱结构信号 |
-| v16c 新实验 | light-global | 在 v16b controlled support 上，只在 decoder/head 前加入轻量 GC mixer；`gamma=0` 初始化，不启用 token bank、boundary、refine | 当前新制作的全局分支实验；目标不是替代局部主干，而是给 final semantic feature 做低侵入 cloud-level context correction |
+| Baseline | 原始 KPConvX | 标准 KPConvX，S3DIS Area5 | best `0.7159`，当前最强可信基线 |
+| 早期混合 | early hybrid | DA-Kernel、DA-Radius、SGCA、refine 同时加入 | 变量过多、归因困难，转向单模块消融 |
+| DA 初探 | v1-v4 | CUDA/Torch DA-Radius、不同 stage 和半径范围 | 证明动态半径路径可运行，但强度与 stage 高度敏感 |
+| 模块消融 | v5-v11 | DA-kernel、DA-radius、global、influence mode 的组合与拆分 | 简单叠加模块不能形成可靠主线 |
+| CUDA/Torch 对照 | v12 | Torch block mask 对照 CUDA 改图 | best `0.6815`，主要作为语义正确性参考 |
+| 真实动态半径 | v13 | CUDA 重建邻域，stage 3/4，strength 0.5，block mask 关闭 | best `0.7096`；beam/board/window/sofa 有信号，door/column 等下降 |
+| v13 复跑 | v13 rerun clip2 | 保存代码复跑，仅把 `clip_grad` 从 1.0 放宽到 2.0 | best `0.7030`；单改裁剪没有提升 |
+| 保守动态半径 | v13b | stage 3/4，候选邻居 24，范围更窄，strength 0.35，clip 2.0 | best `0.6841`；更保守策略削弱 v13 的结构类收益 |
+| 旧全局融合 | v14 encoder-SGCA | encoder stage4/5 直接改写 feature | 提前止损，best 约 `0.6001`；encoder/skip 污染明显 |
+| 后置全局融合 | v14 decoder-SGCA | decoder/head 前融合，gamma 零初始化 | best `0.7004`；融合位置更安全，但上下文信息质量不足 |
+| PTv3-inspired 双分支 | v15 | serialized patch/token bank + decoder fusion | 没有形成可信正收益 |
+| 边界门控重型版 | v15 stage234 | stage2/3/4 global + boundary risk + boundary loss + refine | best 约 `0.5971`；boundary loss 能学，但 segmentation 负迁移 |
+| 内化式初版 | v16 DA-stat GC | DA-meta shell bias + decoder GC 同时启用 | 58 epoch 提前止损，best `0.5916`；不能归因到单一模块 |
+| 局部条件器 | v16-local | 不改邻域图，stage3/4 DA-meta channel bias，关闭 GC | 完整 200 epoch，best `0.6977`；统计信号有作用但不够强 |
+| 候选邻域对照 | v16b superset-only | 只扩大候选邻居，不开 support mask | 用于隔离“大候选邻域本身”的影响，不作为主结果 |
+| 受控支持集 | v16b controlled support | superset graph + hard effective-radius mask + DA-meta | 三 seed best 均值 `0.7064`；高方差，不稳定超过 baseline |
+| 轻量全局配置 | v16c light-global | 在 controlled support 后加 decoder GC | 配置已设计，但没有找到独立完整训练结果，不能作为已验证路线 |
+| 双支持残差 | v17 dual-support | original support 保底，expanded support 作为 gated residual，只开 stage4 | best `0.7084`，final `0.5861`，tail20 `0.6514±0.0345`，训练 `44.52h`；慢且未超过 baseline |
+| 零训练诊断 | v17 alpha sweep | 同一 best/last checkpoint，推理期 alpha=`0/0.25/0.5/0.75/1` | best checkpoint 范围 `0.6828~0.6836`；last 范围 `0.6772~0.6779`，差异极小 |
 
-## 关键认知变化
+## 关键实验数据
 
-### v13 是第一个真正有价值的局部几何版本
+| 实验 | best epoch | best mIoU | final mIoU | tail20 mean/std | 训练时长 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| baseline | 185 | 0.7159 | 0.6059 | 0.6407 / 0.0336 | 24.10h |
+| v13 | 175 | 0.7096 | 0.6386 | 0.6498 / 0.0294 | 24.48h |
+| v14 decoder-SGCA | 193 | 0.7004 | 0.6868 | 0.6543 / 0.0316 | 27.57h |
+| v16-local | 156 | 0.6977 | 0.6693 | 0.6495 / 0.0287 | 31.77h |
+| v16b seed 40979289 | 176 | 0.7161 | 0.6873 | 0.6521 / 0.0338 | 29.32h |
+| v16b seed 50040149 | 167 | 0.7032 | 0.6642 | 0.6586 / 0.0287 | 26.55h |
+| v16b seed 19095314 | 146 | 0.7000 | 0.5961 | 0.6401 / 0.0308 | 29.39h |
+| v17 | 193 | 0.7084 | 0.5861 | 0.6514 / 0.0345 | 44.52h |
 
-v13 没有超过 baseline，但证明 DA-Radius 对部分结构类可能有帮助，尤其是 board、window、sofa、beam 等结构类。
+注意：训练期 validation 使用 `GridSample(mode="train") + SphereCrop(mode="random")`，单 epoch mIoU 含随机 crop 噪声。best 值不能脱离多 seed、tail 均值和固定协议复评单独使用。
 
-### v13b 说明继续调半径参数不是主线
+## v17 alpha sweep 结果
 
-更保守的半径、更大的邻居上限、更松的梯度裁剪，没有带来收益，反而削掉了结构类信号。
+### model_best（epoch 193）
 
-### v14 说明全局上下文的位置非常关键
+| alpha | mIoU | mAcc | allAcc |
+| ---: | ---: | ---: | ---: |
+| 0.00 | 0.6828 | 0.7680 | 0.8775 |
+| 0.25 | 0.6833 | 0.7682 | 0.8778 |
+| 0.50 | 0.6834 | 0.7683 | 0.8779 |
+| 0.75 | 0.6835 | 0.7683 | 0.8780 |
+| 1.00 | 0.6836 | 0.7681 | 0.8779 |
 
-encoder 强融合失败，decoder/head 前融合明显更稳。这说明全局信息不能过早污染 encoder skip feature。
+### model_last（epoch 200）
 
-### v15 说明 PTv3-style 全局分支不能生硬拼接
+| alpha | mIoU | mAcc | allAcc |
+| ---: | ---: | ---: | ---: |
+| 0.00 | 0.6772 | 0.7654 | 0.8749 |
+| 0.25 | 0.6777 | 0.7658 | 0.8752 |
+| 0.50 | 0.6779 | 0.7660 | 0.8753 |
+| 0.75 | 0.6777 | 0.7661 | 0.8754 |
+| 1.00 | 0.6775 | 0.7660 | 0.8755 |
 
-boundary 辅助任务能学会，但主分割变差，说明问题不是“边界没学到”，而是这个边界/全局机制没有真正服务 segmentation。
+这些绝对值不能直接与训练日志中的随机 epoch best `0.7084` 比较；alpha sweep 的价值是同一 checkpoint、同一固定 seed 下的横向差异。横向差异接近零，说明推理期缩放 expanded residual 不是主要修复旋钮。
 
-### v16 是路线转折
+## 已回答的问题
 
-不再把 DA-Radius 当强动态邻域重建器，也不再把 PTv3 当大分支硬接。当前方向改成：
+1. **只给 KPConvX 注入 DA-meta 能否复现 v13？**
+   - 不能。v16-local 比失败重型版稳定，但 best `0.6977`，没有复现 v13。
+2. **把 support 改成 hard controlled mask 能否稳定超过 baseline？**
+   - 不能。v16b 三 seed best 均值约 `0.7064`，高于 baseline 的单次结果不可信。
+3. **保留 original support，再把 expanded support 作为 residual 能否解决 hard mask 问题？**
+   - 没有解决。v17 best `0.7084`，成本显著增加。
+4. **v17 是否只是推理期 residual 太强？**
+   - 当前证据不支持。alpha 从 0 调到 1 的 mIoU 变化不超过 `0.0008`。
+5. **简单 decoder global context 是否已经验证？**
+   - 已验证到“更安全但收益不足”。v14 decoder-SGCA 和 v16 初版都没有超过 baseline。
+6. **边界辅助监督是否会自动解决全局/邻域污染？**
+   - 不会。v15 boundary loss 下降，但 segmentation 变差。
 
-`KPConvX 主干 + DA 局部统计条件化 kernel attention + 轻量 decoder global context`
+## 仍未回答的问题
 
-v16 之后路线被拆成更清楚的消融顺序：
+1. alpha 几乎无效，是因为 expanded branch 本身贡献很小，还是因为 v17 训练期间主干已经与 expanded branch 共同适配，导致推理期开关无法撤销训练历史？
+2. v13、v16b、v17 的结构类正信号有多少是机制收益，有多少是 random crop、seed 和 best-of-200 选择偏差？
+3. “选择性 support”是否仍值得实现？目前只有类别现象和文献动机，没有直接实验支持。
+4. 下一步应先审计 KPConvX/DA-meta 主干，还是转向 compatibility-aware local aggregation、独立全局 backbone benchmark，或者停止 support 路线？
+5. PTv3 的价值是否只能通过完整/近完整 backbone 体现，而不适合作为 KPConvX 的外挂 global branch？
 
-1. `v16-local`：先验证不改邻域图时，DA-meta 是否能让 KPConvX block 感知局部密度、有效邻居比例和距离离散度。
-2. `v16b`：如果只给统计不够，就引入受控 support mask，让 stage 3/4 有温和的有效支持集变化。
-3. `v16c-light-global`：在局部分支稳定后，只在 decoder/head 前加一个很弱的全局残差，观察它是否能补 door、bookcase、chair、column 等语义类，而不牺牲 board、beam、window 等结构类。
+## 明确避免重复的实验
 
-这个拆分的核心价值是隔离变量：先判断局部几何统计有没有用，再判断 support set 自适应是不是必要，最后才判断轻量全局上下文是否能提供额外补偿。
+- 不再复跑 `v13 + clip_grad=2.0`；已经有 v13 saved-code rerun。
+- 不再复跑“更保守 DA-Radius + 候选邻居 24”；v13b 已失败。
+- 不再把 hard support mask 换名重跑；v16b 已有三个 seed。
+- 不再只给 v17 改 inference alpha 或简单 gamma；alpha sweep 已表明该旋钮影响极小。
+- 不直接给 v17 增加更多 stage、更大 support 或更重 global branch。
+- 不把 `boundary loss 能下降` 当作机制有效；v15 已证明两者不等价。
+- 不把简单 cloud mean token / decoder GC 当成未验证新方向；v14/v16 已覆盖。
+
+## 上一轮 GPT-5.5Pro 推测的验证状态
+
+| 推测/决策规则 | 当前状态 | 证据 |
+| --- | --- | --- |
+| `alpha<1` 明显优于 1，则做 strength-constrained v17 | 未触发 | best checkpoint 最大差仅 0.0008，且 alpha=1 略高 |
+| `alpha=0` 最好，则 expanded support 为负贡献 | 未触发 | best 上 alpha=0 最低；last 上 alpha=0.5 略高，但差异仅 0.0007 |
+| 所有 alpha 差不多，则问题不只是强度，应停止直接扩 support 并审计主干 | 已触发 | 两个 checkpoint 都对 alpha 不敏感 |
+| v17 慢主要来自双路径聚合和 candidate support | 已支持 | 训练时长约 baseline 的 1.85x，代码存在两次聚合 |
+| v17 后期不是小残差 | 已支持 | gamma 约 0.706、gate_mean 约 0.508、residual_ratio 约 0.13 |
+| 训练一个 gamma-cap v17 | 不应直接执行 | 该实验原本以 `alpha<1` 明显更好为前提，前提没有成立 |
+| 做 boundary/uncertainty selective support | 尚未验证 | 有文献和类别现象动机，但 alpha 结果没有直接支持它 |
+
+## 当前决策点
+
+上一轮 Pro 的第一阶段诊断已经完成，结果落入“所有 alpha 基本相同”分支。按照它原来的决策规则，不应直接训练 strength-constrained v17。现在真正需要外部模型判断的是：
+
+- 是否应彻底暂停 support 扩展路线；
+- 是否需要先做一个更便宜的训练历史/固定验证诊断；
+- 如果仍做选择性邻域，怎样保证它不是 v16b/v17 的换名重复；
+- 如果转向全局机制，应该先跑 PTv3 backbone benchmark，还是设计与 KPConvX 内部一致的 context operator；
+- 在单张 4090D、导师催进度的条件下，哪个单一实验信息增益最高、最可能提升 mIoU。
 
 ## 一句话总结
 
-当前路线从“外挂模块叠加”逐渐转向“把局部几何统计内化进 KPConvX 主干，再用受控 support mask 恢复局部邻域收益，最后谨慎加入可忽略的深层全局上下文”。这是比 v15 更稳、更工程化的方向。
+路线已经从“继续堆模块”推进到一个明确的否定性节点：DA-meta、hard controlled support 和 dual-support residual 都没有稳定超过 baseline，v17 推理期 alpha 也不是有效修复旋钮。下一步必须基于这一完整证据重新选方向，而不是继续沿旧 support 路线做低信息量调参。

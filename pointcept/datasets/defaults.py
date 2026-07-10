@@ -177,6 +177,10 @@ class DefaultDataset(Dataset):
             else:
                 data["index"] = np.arange(data["coord"].shape[0])
                 data_part_list = [data]
+            voxel_part_limit = getattr(self.test_cfg, "voxel_part_limit", None)
+            if voxel_part_limit is not None:
+                voxel_part_limit = max(int(voxel_part_limit), 0)
+                data_part_list = data_part_list[:voxel_part_limit]
             for data_part in data_part_list:
                 if self.test_crop is not None:
                     data_part = self.test_crop(data_part)

@@ -60,6 +60,12 @@ def parse_args():
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT)
     parser.add_argument("--point-max", type=int, default=60000)
     parser.add_argument("--fallback-point-max", type=int, default=40000)
+    parser.add_argument(
+        "--grid-size",
+        type=float,
+        default=0.02,
+        help="Test voxel size in meters; use 0.04 for scale04 checkpoints.",
+    )
     parser.add_argument("--num-worker-test", type=int, default=6)
     parser.add_argument("--fragment-batch-size-test", type=int, default=4)
     parser.add_argument(
@@ -140,7 +146,7 @@ def configure_worker_cfg(args):
     ]
     cfg.data.test.test_mode = True
     cfg.data.test.test_cfg = ConfigDict(
-        canonical_test_cfg(args.point_max, args.protocol)
+        canonical_test_cfg(args.point_max, args.protocol, args.grid_size)
     )
     return default_setup(cfg)
 
@@ -253,6 +259,7 @@ def local_inventory(args):
             protocol_version=PROTOCOL_VERSION,
             manifest=str(Path(args.manifest).resolve()),
             exp_root=str(Path(args.exp_root).resolve()),
+            requested_grid_size=float(args.grid_size),
             requested_point_max=args.point_max,
             fallback_point_max=args.fallback_point_max,
             requested_fragment_batch_size=max(
@@ -308,6 +315,7 @@ def worker_command(
         protocol,
         point_max,
         fragment_batch_size_test,
+        grid_size=args.grid_size,
     )
     metadata_path = output_dir / "expected_run_meta.json"
     atomic_write_json(metadata_path, metadata)
@@ -325,6 +333,8 @@ def worker_command(
         protocol,
         "--point-max",
         str(point_max),
+        "--grid-size",
+        str(args.grid_size),
         "--num-worker-test",
         str(args.num_worker_test),
         "--fragment-batch-size-test",
@@ -358,6 +368,7 @@ def run_entry(
         protocol,
         point_max,
         fragment_batch_size_test,
+        grid_size=args.grid_size,
     )
     if metadata_matches(output_dir, expected) and not args.overwrite:
         print(f"SKIP completed: {output_dir}")
@@ -368,6 +379,7 @@ def run_entry(
         if expected_path.is_file():
             with expected_path.open("r", encoding="utf-8") as f:
                 previous_expected = json.load(f)
+            previous_expected.setdefault("grid_size", 0.02)
             resumable = previous_expected == expected
         if not resumable and any(output_dir.iterdir()):
             raise RuntimeError(
@@ -448,6 +460,7 @@ def run_preflight(args, entries):
             if success:
                 decision = dict(
                     protocol_version=PROTOCOL_VERSION,
+                    selected_grid_size=float(args.grid_size),
                     selected_point_max=point_max,
                     selected_fragment_batch_size=fragment_batch_size,
                     num_worker_test=max(int(args.num_worker_test), 0),
@@ -522,6 +535,7 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
     protocol_versions = {row["protocol_version"] for row in checkpoint_rows}
     protocols = {row["protocol"] for row in checkpoint_rows}
     point_limits = {int(row["point_max"]) for row in checkpoint_rows}
+    grid_sizes = {float(row.get("grid_size", 0.02)) for row in checkpoint_rows}
     fragment_batch_sizes = {
         int(row.get("fragment_batch_size_test", 1)) for row in checkpoint_rows
     }
@@ -532,6 +546,8 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
         raise RuntimeError(f"Mixed protocols in {stage_dir}: {protocols}")
     if len(point_limits) != 1:
         raise RuntimeError(f"Mixed point_max values in {stage_dir}: {point_limits}")
+    if len(grid_sizes) != 1:
+        raise RuntimeError(f"Mixed grid_size values in {stage_dir}: {grid_sizes}")
     if len(fragment_batch_sizes) != 1:
         raise RuntimeError(
             f"Mixed fragment batch sizes in {stage_dir}: {fragment_batch_sizes}"
@@ -655,6 +671,7 @@ def merge_server_results(args, manifest):
             with decision_path.open("r", encoding="utf-8") as f:
                 current_decision = json.load(f)
             current_value = dict(
+                selected_grid_size=current_decision.get("selected_grid_size", 0.02),
                 selected_point_max=current_decision.get("selected_point_max"),
                 selected_fragment_batch_size=current_decision.get(
                     "selected_fragment_batch_size", 1

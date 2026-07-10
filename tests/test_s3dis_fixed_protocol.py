@@ -46,6 +46,11 @@ class FixedProtocolTest(unittest.TestCase):
         self.assertEqual(cfg.crop.point_max, 60000)
         self.assertEqual(len(cfg.aug_transform), 1)
 
+    def test_test_cfg_supports_scale04(self):
+        cfg = canonical_test_cfg(60000, "identity", grid_size=0.04)
+        self.assertEqual(cfg["voxelize"]["grid_size"], 0.04)
+        self.assertEqual(cfg["crop"]["point_max"], 60000)
+
     def test_fragment_batch_candidates_are_unique_and_ordered(self):
         self.assertEqual(fragment_batch_candidates(4, [2, 1, 2]), [4, 2, 1])
         self.assertEqual(fragment_batch_candidates(0, []), [1])
@@ -135,6 +140,17 @@ class FixedProtocolTest(unittest.TestCase):
             )
             self.assertTrue(metadata_matches(output, expected))
 
+    def test_legacy_scale02_metadata_remains_resumable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            legacy = dict(protocol="identity", point_max=60000)
+            expected = dict(**legacy, grid_size=0.02)
+            (output / "metrics.json").write_text("{}", encoding="utf-8")
+            (output / "run_meta.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+            self.assertTrue(metadata_matches(output, expected))
+
     def test_fragment_batch_size_is_part_of_resume_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -154,6 +170,30 @@ class FixedProtocolTest(unittest.TestCase):
             batch_one = expected_run_metadata(entry, "identity", 60000, 1)
             self.assertEqual(batch_four["fragment_batch_size_test"], 4)
             self.assertNotEqual(batch_four, batch_one)
+
+    def test_grid_size_is_part_of_resume_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.py"
+            checkpoint = root / "model_best.pth"
+            config.write_text("x = 1\n", encoding="utf-8")
+            checkpoint.write_bytes(b"checkpoint")
+            entry = dict(
+                family="baseline",
+                run_id="run",
+                seed=None,
+                checkpoint_kind="best",
+                config_path=str(config),
+                weight_path=str(checkpoint),
+            )
+            scale02 = expected_run_metadata(
+                entry, "identity", 60000, 4, grid_size=0.02
+            )
+            scale04 = expected_run_metadata(
+                entry, "identity", 60000, 4, grid_size=0.04
+            )
+            self.assertEqual(scale04["grid_size"], 0.04)
+            self.assertNotEqual(scale02, scale04)
 
     def test_two_server_compact_merge(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -60,11 +60,11 @@ def protocol_augmentations(protocol):
     raise ValueError(f"Unknown protocol: {protocol}")
 
 
-def canonical_test_cfg(point_max, protocol):
+def canonical_test_cfg(point_max, protocol, grid_size=0.02):
     return dict(
         voxelize=dict(
             type="GridSample",
-            grid_size=0.02,
+            grid_size=float(grid_size),
             hash_type="fnv",
             mode="test",
         ),
@@ -200,10 +200,17 @@ def file_identity(path):
     return dict(path=str(path), size=int(stat.st_size), mtime_ns=int(stat.st_mtime_ns))
 
 
-def expected_run_metadata(entry, protocol, point_max, fragment_batch_size_test=1):
+def expected_run_metadata(
+    entry,
+    protocol,
+    point_max,
+    fragment_batch_size_test=1,
+    grid_size=0.02,
+):
     return dict(
         protocol_version=PROTOCOL_VERSION,
         protocol=protocol,
+        grid_size=float(grid_size),
         point_max=int(point_max),
         fragment_batch_size_test=max(int(fragment_batch_size_test), 1),
         family=entry["family"],
@@ -226,7 +233,13 @@ def metadata_matches(output_dir, expected):
             actual = json.load(f)
     except (OSError, ValueError):
         return False
-    return all(actual.get(key) == value for key, value in expected.items())
+    for key, value in expected.items():
+        # Results produced before scale04 support did not write grid_size. Those
+        # results always used the original fixed 0.02 m protocol.
+        actual_value = actual.get(key, 0.02 if key == "grid_size" else None)
+        if actual_value != value:
+            return False
+    return True
 
 
 def atomic_write_json(path, data):
@@ -287,6 +300,7 @@ def collect_stage_results(stage_dir, entries):
         common = dict(
             protocol_version=metadata["protocol_version"],
             protocol=metadata["protocol"],
+            grid_size=metadata.get("grid_size", 0.02),
             point_max=metadata["point_max"],
             fragment_batch_size_test=metadata.get("fragment_batch_size_test", 1),
             family=entry["family"],

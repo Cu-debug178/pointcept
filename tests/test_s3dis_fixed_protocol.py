@@ -22,6 +22,7 @@ from tools.s3dis_fixed_protocol import (
     PROTOCOL_VERSION,
     build_checkpoint_entries,
     canonical_test_cfg,
+    checkpoint_filename,
     expected_run_metadata,
     identity_augmentations,
     load_manifest,
@@ -129,6 +130,58 @@ class FixedProtocolTest(unittest.TestCase):
             )
             self.assertEqual(len(entries), 4)
             self.assertEqual(len(missing), 2)
+
+    def test_periodic_checkpoint_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "exp"
+            run = root / "s3dis" / "scale04-run"
+            (run / "model").mkdir(parents=True)
+            (run / "config.py").write_text("x = 1\n", encoding="utf-8")
+            (run / "model" / "model_best.pth").write_bytes(b"best")
+            (run / "model" / "epoch_20.pth").write_bytes(b"epoch20")
+            manifest = dict(
+                runs=[
+                    dict(
+                        family="scale04-baseline",
+                        run_id="scale04-run",
+                        checkpoints=["best", "epoch_20"],
+                    )
+                ]
+            )
+
+            entries = build_checkpoint_entries(manifest, root)
+
+            self.assertEqual(
+                [Path(entry["weight_path"]).name for entry in entries],
+                ["model_best.pth", "epoch_20.pth"],
+            )
+
+    def test_checkpoint_kind_validation(self):
+        self.assertEqual(checkpoint_filename("best"), "model_best.pth")
+        self.assertEqual(checkpoint_filename("last"), "model_last.pth")
+        self.assertEqual(checkpoint_filename("epoch_200"), "epoch_200.pth")
+        for invalid in ("epoch_0", "epoch_-1", "epoch_x", "model_best", "foo"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    checkpoint_filename(invalid)
+
+    def test_expected_result_keys_support_periodic_checkpoints(self):
+        manifest = dict(
+            runs=[
+                dict(
+                    family="scale04-baseline",
+                    run_id="scale04-run",
+                    checkpoints=["best", "epoch_20", "epoch_40"],
+                )
+            ]
+        )
+        keys = expected_result_keys(
+            manifest, checkpoint_kinds=["epoch_20", "epoch_40"]
+        )
+        self.assertEqual(
+            {key[-1] for key in keys},
+            {"epoch_20", "epoch_40"},
+        )
 
     def test_resume_metadata_allows_runtime_fields(self):
         with tempfile.TemporaryDirectory() as tmp:

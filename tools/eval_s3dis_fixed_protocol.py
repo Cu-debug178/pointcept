@@ -22,6 +22,7 @@ from tools.s3dis_fixed_protocol import (  # noqa: E402
     build_checkpoint_entries,
     build_decision_report,
     canonical_test_cfg,
+    checkpoint_filename,
     collect_stage_results,
     discover_completed_entries,
     entry_output_dir,
@@ -80,9 +81,11 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-kinds",
         nargs="+",
-        choices=("best", "last"),
         default=None,
-        help="Evaluate only the selected checkpoint kinds; defaults to the manifest.",
+        help=(
+            "Evaluate only selected checkpoint kinds (best, last, epoch_<N>); "
+            "defaults to the manifest."
+        ),
     )
     parser.add_argument(
         "--run-ids",
@@ -115,7 +118,13 @@ def parse_args():
     )
     parser.add_argument("--room-filter", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--run-meta-json", default=None, help=argparse.SUPPRESS)
-    return parser.parse_args()
+    args = parser.parse_args()
+    for checkpoint_kind in args.checkpoint_kinds or ():
+        try:
+            checkpoint_filename(checkpoint_kind)
+        except ValueError as error:
+            parser.error(str(error))
+    return args
 
 
 def configure_worker_cfg(args):
@@ -271,7 +280,17 @@ def local_inventory(args):
             )[1:],
             num_worker_test=max(int(args.num_worker_test), 0),
             checkpoint_kinds=(
-                list(checkpoint_kinds) if checkpoint_kinds else ["best", "last"]
+                list(checkpoint_kinds)
+                if checkpoint_kinds
+                else list(
+                    dict.fromkeys(
+                        checkpoint_kind
+                        for run in manifest["runs"]
+                        for checkpoint_kind in run.get(
+                            "checkpoints", ["best", "last"]
+                        )
+                    )
+                )
             ),
             run_ids=list(run_ids) if run_ids else None,
             screen_protocol="identity",
@@ -572,7 +591,11 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
         )
         missing_keys = sorted(expected_keys - actual_keys, key=str)
         unexpected_keys = sorted(actual_keys - expected_keys, key=str)
-        if not missing_keys and not unexpected_keys:
+        if (
+            not missing_keys
+            and not unexpected_keys
+            and manifest.get("enable_tta_selection", True)
+        ):
             selected_family = select_tta_family(
                 family_rows,
                 baseline_family=manifest.get("baseline_family", "baseline"),

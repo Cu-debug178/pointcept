@@ -16,6 +16,21 @@ import numpy as np
 PROTOCOL_VERSION = "s3dis-fixed-v1"
 RISK_CLASSES = ("door", "window", "column", "wall", "clutter")
 POSITIVE_CLASSES = ("beam", "board", "table", "chair", "sofa")
+CHECKPOINT_KIND_PATTERN = re.compile(r"^epoch_([1-9][0-9]*)$")
+
+
+def checkpoint_filename(checkpoint_kind):
+    """Map a manifest checkpoint label to its saved weight filename."""
+    if checkpoint_kind in {"best", "last"}:
+        return f"model_{checkpoint_kind}.pth"
+    if isinstance(checkpoint_kind, str) and CHECKPOINT_KIND_PATTERN.fullmatch(
+        checkpoint_kind
+    ):
+        return f"{checkpoint_kind}.pth"
+    raise ValueError(
+        "Unsupported checkpoint kind {!r}; expected best, last, or "
+        "epoch_<positive integer>".format(checkpoint_kind)
+    )
 
 
 def identity_augmentations():
@@ -127,12 +142,17 @@ def build_checkpoint_entries(manifest, exp_root, allow_missing=False):
     for run in manifest["runs"]:
         run_id = run["run_id"]
         family = run["family"]
+        checkpoints = run.get("checkpoints", ["best", "last"])
+        checkpoint_files = {
+            checkpoint_kind: checkpoint_filename(checkpoint_kind)
+            for checkpoint_kind in checkpoints
+        }
         try:
             run_dir = resolve_run_dir(exp_root, run_id)
         except FileNotFoundError as error:
             if not allow_missing:
                 raise
-            for checkpoint_kind in run.get("checkpoints", ["best", "last"]):
+            for checkpoint_kind in checkpoints:
                 missing.append(
                     dict(
                         family=family,
@@ -144,13 +164,8 @@ def build_checkpoint_entries(manifest, exp_root, allow_missing=False):
                 )
             continue
         config_path = run_dir / "config.py"
-        checkpoints = run.get("checkpoints", ["best", "last"])
         for checkpoint_kind in checkpoints:
-            if checkpoint_kind not in {"best", "last"}:
-                raise ValueError(
-                    f"Unsupported checkpoint kind {checkpoint_kind!r} for {run_id}"
-                )
-            weight_path = run_dir / "model" / f"model_{checkpoint_kind}.pth"
+            weight_path = run_dir / "model" / checkpoint_files[checkpoint_kind]
             if not weight_path.is_file():
                 if not allow_missing:
                     raise FileNotFoundError(weight_path)

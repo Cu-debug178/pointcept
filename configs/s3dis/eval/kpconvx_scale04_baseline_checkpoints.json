@@ -1,0 +1,26 @@
+{
+  "protocol_version": "s3dis-fixed-v1",
+  "baseline_family": "scale04-baseline",
+  "enable_tta_selection": false,
+  "runs": [
+    {
+      "family": "scale04-baseline",
+      "run_id": "kpconvx-scale04-baseline_20260710_2057",
+      "seed": 57106803,
+      "checkpoints": [
+        "best",
+        "last",
+        "epoch_20",
+        "epoch_40",
+        "epoch_60",
+        "epoch_80",
+        "epoch_100",
+        "epoch_120",
+        "epoch_140",
+        "epoch_160",
+        "epoch_180",
+        "epoch_200"
+      ]
+    }
+  ]
+}

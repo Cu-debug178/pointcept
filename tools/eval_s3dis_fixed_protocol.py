@@ -808,6 +808,7 @@ def run_stage_entries(
     fragment_batch_size_test,
 ):
     stage_dir = Path(args.output_root) / stage_name
+    failed_entries_path = stage_dir / "failed_entries.json"
     failures = []
     for entry in entries:
         if not run_entry(
@@ -820,8 +821,9 @@ def run_stage_entries(
         ):
             failures.append(entry)
     if failures:
-        atomic_write_json(stage_dir / "failed_entries.json", failures)
+        atomic_write_json(failed_entries_path, failures)
         raise RuntimeError(f"{len(failures)} checkpoint evaluations failed")
+    failed_entries_path.unlink(missing_ok=True)
 
 
 def read_selected_family(args):

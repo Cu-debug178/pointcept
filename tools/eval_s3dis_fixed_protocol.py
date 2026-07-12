@@ -143,6 +143,9 @@ def configure_worker_cfg(args):
     cfg.num_worker_test_per_gpu = max(int(args.num_worker_test), 0)
     cfg.empty_cache = False
     cfg.test.export_metrics = True
+    # Checkpoint sweeps only need aggregate metrics. Keeping one full-room
+    # prediction cache per checkpoint can exhaust the experiment disk.
+    cfg.test.save_predictions = False
     cfg.test.allow_missing_state_keys = []
     if not bool(getattr(cfg.model.backbone, "enable_support_mask", False)):
         cfg.test.allow_missing_state_keys = ["backbone.support_mask_step"]

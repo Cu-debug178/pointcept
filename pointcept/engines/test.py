@@ -179,6 +179,7 @@ class SemSegTester(TesterBase):
 
         save_path = os.path.join(self.cfg.save_path, "result")
         make_dirs(save_path)
+        save_predictions = bool(getattr(self.cfg.test, "save_predictions", True))
         # create submit folder only on main process
         if (
             self.cfg.data.test.type == "ScanNetDataset"
@@ -216,7 +217,7 @@ class SemSegTester(TesterBase):
             segment = data_dict.pop("segment")
             data_name = data_dict.pop("name")
             pred_save_path = os.path.join(save_path, "{}_pred.npy".format(data_name))
-            if os.path.isfile(pred_save_path):
+            if save_predictions and os.path.isfile(pred_save_path):
                 logger.info(
                     "{}/{}: {}, loaded pred and label.".format(
                         idx + 1, len(self.test_loader), data_name
@@ -333,7 +334,8 @@ class SemSegTester(TesterBase):
                     assert "inverse" in data_dict.keys()
                     pred = pred[data_dict["inverse"]]
                     segment = data_dict["origin_segment"]
-                np.save(pred_save_path, pred)
+                if save_predictions:
+                    np.save(pred_save_path, pred)
             if (
                 self.cfg.data.test.type == "ScanNetDataset"
                 or self.cfg.data.test.type == "ScanNet200Dataset"

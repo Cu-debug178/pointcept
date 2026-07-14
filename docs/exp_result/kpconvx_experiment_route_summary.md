@@ -27,6 +27,11 @@
 完整数据见
 [`s3dis_fixed_protocol_results_20260714.md`](s3dis_fixed_protocol_results_20260714.md)。
 
+路线二下一步保持原设计：训练同一 scale04 数据与优化协议下的 v17，验证
+旧 0.02m 固定协议中 v17 相对 baseline 的 `+0.0130` 是否能够跨尺度保留。
+成功门槛是相对 scale04 baseline `0.6939` 至少提高 `+0.005`，即达到
+`0.6989`，同时 door/window/column/board/clutter 不出现明显净下降。
+
 ## 当前总判断
 
 当前还没有一个改进在稳定性和多次实验上超过原始 KPConvX baseline。已经得到的最重要结论不是“某个参数最好”，而是逐步排除了几类看似合理、实际没有形成净收益的路线：

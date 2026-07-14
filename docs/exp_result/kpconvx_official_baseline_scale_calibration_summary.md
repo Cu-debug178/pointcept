@@ -170,5 +170,8 @@ scripts/train_route2_scale04.sh
 
 scale04 epoch 200 相对旧 baseline 提升 `+0.0384` mIoU，远高于预设的
 `+0.005` 成功阈值，确认物理尺度失配是此前 Pointcept KPConvX 基线的主要
-问题之一。当前不应立即训练 scale04 v17；应先对齐更多官方 S3DIS 主干设置，
-并把 scale04 plain KPConvX 作为所有新结构的统一对照。
+问题之一。下一步应按路线二原计划训练同协议 scale04 v17，并以 scale04
+plain KPConvX `0.6939` 为唯一直接对照。若 scale04 v17 达不到 `0.6989`
+且重点边界类没有净改善，则说明旧尺度下的 v17 收益主要是在补偿尺度失配，
+不应继续扩展 dual-support 路线。其他官方 S3DIS kernel 参数对齐降为后续
+辅助消融，不插入这组已设计好的跨尺度机制验证之前。

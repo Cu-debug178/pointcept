@@ -3,6 +3,20 @@ _base_ = ["./semseg-kpconvx-base-s3dis-scale04-4090d-area5.py"]
 # v17 under exactly the same scale04 data and optimization protocol as the
 # calibrated baseline. The original support remains the identity path and the
 # expanded stage4 support is only a gated residual.
+
+# Keep denser periodic weights for deterministic full-scene diagnostics. The
+# primary comparison with the baseline still uses the shared 20-epoch grid plus
+# model_best/model_last, so the extra checkpoints do not change model selection.
+hooks = [
+    dict(type="CheckpointLoader"),
+    dict(type="ModelHook"),
+    dict(type="IterationTimer", warmup_iter=2),
+    dict(type="InformationWriter"),
+    dict(type="SemSegEvaluator"),
+    dict(type="CheckpointSaver", save_freq=10),
+    dict(type="PreciseEvaluator", test_last=False),
+]
+
 model = dict(
     backbone=dict(
         _delete_=True,

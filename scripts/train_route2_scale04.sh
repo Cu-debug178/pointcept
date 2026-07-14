@@ -16,10 +16,14 @@ case "${VARIANT}" in
     baseline)
         CONFIG="semseg-kpconvx-base-s3dis-scale04-4090d-area5"
         EXP_NAME="kpconvx-scale04-baseline"
+        EXPECTED_SAVE_FREQ=20
+        REQUIRED_DISK_GIB=4
         ;;
     v17)
         CONFIG="semseg-kpconvx-hybrid-v17-scale04-4090d-area5"
         EXP_NAME="kpconvx-v17-scale04"
+        EXPECTED_SAVE_FREQ=10
+        REQUIRED_DISK_GIB=6
         ;;
     *)
         echo "Unknown variant: ${VARIANT}. Use baseline or v17." >&2
@@ -37,6 +41,8 @@ echo "$(date '+%F %T') route2-scale04 start"
 echo "variant=${VARIANT}"
 echo "config=${CONFIG}"
 echo "project=${PROJECT_DIR}"
+echo "checkpoint_save_freq=${EXPECTED_SAVE_FREQ}"
+echo "required_disk_gib=${REQUIRED_DISK_GIB}"
 
 cd "${PROJECT_DIR}"
 
@@ -46,10 +52,10 @@ if [[ -f "${PROJECT_DIR}/activate_env.sh" ]]; then
 fi
 
 AVAILABLE_KB="$(df -Pk "${PROJECT_DIR}/exp" | awk 'NR==2 {print $4}')"
-REQUIRED_KB=$((4 * 1024 * 1024))
+REQUIRED_KB=$((REQUIRED_DISK_GIB * 1024 * 1024))
 echo "available_disk_kb=${AVAILABLE_KB}"
 if [[ -z "${AVAILABLE_KB}" || "${AVAILABLE_KB}" -lt "${REQUIRED_KB}" ]]; then
-    echo "Insufficient disk space: at least 4 GiB is required." >&2
+    echo "Insufficient disk space: at least ${REQUIRED_DISK_GIB} GiB is required." >&2
     exit 3
 fi
 
@@ -65,10 +71,13 @@ assert float(backbone_cfg.subsample_size) == 0.04
 assert float(backbone_cfg.kp_radius) == 2.1
 assert float(cfg.data.test.test_cfg.voxelize.grid_size) == 0.04
 saver = next(hook for hook in cfg.hooks if hook.type == "CheckpointSaver")
-assert int(saver.save_freq) == 20
+assert int(saver.save_freq) == ${EXPECTED_SAVE_FREQ}
 model = build_model(cfg.model)
 params = sum(parameter.numel() for parameter in model.parameters())
-print(f"config smoke passed: type={backbone_cfg.type}, params={params}")
+print(
+    f"config smoke passed: type={backbone_cfg.type}, params={params}, "
+    f"save_freq={saver.save_freq}"
+)
 del model
 PY
 

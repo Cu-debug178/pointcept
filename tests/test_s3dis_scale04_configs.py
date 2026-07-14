@@ -102,11 +102,18 @@ class S3DISScale04ConfigTest(unittest.TestCase):
             self.assertEqual(len(test_cfg["aug_transform"]), 1)
 
     def test_periodic_checkpoint_frequency(self):
-        for config in (self.baseline, self.v17):
-            saver = next(
-                hook for hook in config["hooks"] if hook["type"] == "CheckpointSaver"
-            )
-            self.assertEqual(saver["save_freq"], 20)
+        baseline_saver = next(
+            hook
+            for hook in self.baseline["hooks"]
+            if hook["type"] == "CheckpointSaver"
+        )
+        v17_saver = next(
+            hook
+            for hook in self.v17["hooks"]
+            if hook["type"] == "CheckpointSaver"
+        )
+        self.assertEqual(baseline_saver["save_freq"], 20)
+        self.assertEqual(v17_saver["save_freq"], 10)
 
     def test_v17_only_enables_intended_experimental_paths(self):
         baseline = self.baseline["model"]["backbone"]

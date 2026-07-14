@@ -122,8 +122,12 @@ first_radius = subsample_size * kp_radius
 - fragment batch size 为 2；
 - 默认只跑 identity 单视角，不在训练结束时启动 13-view TTA；
 - 13-view 只在模型通过单视角筛选后单独运行。
-- 每 20 个日志 epoch 保存一个可恢复 checkpoint：`epoch_20.pth` 到
-  `epoch_200.pth`；每个实验额外占用约 1.6GB。
+- scale04 baseline 每 20 个日志 epoch 保存一个可恢复 checkpoint：
+  `epoch_20.pth` 到 `epoch_200.pth`，实际实验保持不变；
+- scale04 v17 每 10 个日志 epoch 保存一次，便于观察后期固定全场景曲线；
+- v17 的正式主对比仍只使用 baseline 也具备的 `20/40/.../200` 加
+  `model_best/model_last`。额外的 `10/30/.../190` 只用于诊断，避免更密的
+  checkpoint 选择网格造成不公平的 best-of-N 偏差。
 
 ## 6. 实验顺序与判定
 
@@ -175,3 +179,7 @@ plain KPConvX `0.6939` 为唯一直接对照。若 scale04 v17 达不到 `0.6989
 且重点边界类没有净改善，则说明旧尺度下的 v17 收益主要是在补偿尺度失配，
 不应继续扩展 dual-support 路线。其他官方 S3DIS kernel 参数对齐降为后续
 辅助消融，不插入这组已设计好的跨尺度机制验证之前。
+
+为提高固定协议 checkpoint 曲线的时间分辨率，待训练的 scale04 v17 改为
+每 10 个日志 epoch 保存一次。该变化不参与 forward、loss、backward、
+optimizer 或 scheduler，只增加可恢复权重；训练前要求实验盘至少保留 6 GiB。

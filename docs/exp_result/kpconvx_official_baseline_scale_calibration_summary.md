@@ -1,6 +1,6 @@
 # KPConvX 官方基线核验与 S3DIS 尺度校准阶段总结
 
-更新时间：2026-07-10
+更新时间：2026-07-14
 
 ## 1. 当前阶段结论
 
@@ -157,3 +157,18 @@ scripts/train_route2_scale04.sh
 
 默认值仍为 0.02，旧实验和旧缓存保持兼容。复评元数据会记录 `grid_size`，
 防止 0.02m 与 0.04m 结果误用同一预测缓存。
+
+## 8. scale04 实际结果
+
+路线二 baseline 已完成训练和 12 个 checkpoint 的统一全场景复评。最终结果：
+
+| 模型/权重 | 固定 mIoU | mAcc | OA |
+| --- | ---: | ---: | ---: |
+| 旧 0.02m baseline best | 0.6556 | 0.7313 | 0.8790 |
+| scale04 model_best（epoch 193） | 0.6863 | 0.7550 | 0.9002 |
+| scale04 epoch 200 / model_last | **0.6939** | **0.7608** | **0.9024** |
+
+scale04 epoch 200 相对旧 baseline 提升 `+0.0384` mIoU，远高于预设的
+`+0.005` 成功阈值，确认物理尺度失配是此前 Pointcept KPConvX 基线的主要
+问题之一。当前不应立即训练 scale04 v17；应先对齐更多官方 S3DIS 主干设置，
+并把 scale04 plain KPConvX 作为所有新结构的统一对照。

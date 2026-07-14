@@ -1,6 +1,31 @@
 # KPConvX 改进实验总路线
 
-更新时间：2026-07-10
+更新时间：2026-07-14
+
+## 2026-07-14 固定协议补充结论
+
+固定协议复评已改变项目的基线判断。训练期随机裁剪 best 只适合观察训练和
+保存候选 checkpoint，不能继续作为主结果。当前统一 Area5 全场景 identity
+协议下：
+
+- 旧 0.02m baseline best/last 为 `0.6556 / 0.6519`；
+- 旧 0.02m 路线最高是 v17 best `0.6685`；
+- scale04 plain KPConvX epoch 200 达到 `0.6939`；
+- scale04 比旧 baseline best 高 `+0.0384`，比 v17 best 高 `+0.0254`；
+- scale04 从 epoch 120 到 200 的 mIoU 为
+  `0.6660 -> 0.6699 -> 0.6739 -> 0.6866 -> 0.6939`；
+- 随机验证选择的 epoch 193 固定结果为 `0.6863`，低于 epoch 200 的
+  `0.6939`，说明随机 val 会影响 checkpoint 选择；
+- 旧实验本机可用的 6 组 best/last 已复评完成，但 v16b seed 50040149
+  best/last 仍缺失，三 seed 固定协议统计尚不完整。
+
+因此，当前最强可信参考已经从“旧配置训练期 best 0.7159”更新为
+“scale04 plain KPConvX epoch 200 固定 mIoU 0.6939”。scale04 是物理尺度
+校准后的新基线，不是结构创新。后续 DA-Radius、support 或 global 分支必须
+在该基线上重新验证，不能用旧 0.02m 结果直接声称增益。
+
+完整数据见
+[`s3dis_fixed_protocol_results_20260714.md`](s3dis_fixed_protocol_results_20260714.md)。
 
 ## 当前总判断
 
@@ -10,7 +35,8 @@
 
 截至 v17，证据支持以下判断：
 
-- baseline best mIoU 为 `0.7159`，仍是最强可信参考。
+- baseline 训练期随机裁剪 best mIoU 为 `0.7159`，但不再作为最终可信参考；
+  当前固定协议最强参考是 scale04 epoch 200 的 `0.6939`。
 - v13 真实 CUDA DA-Radius best 为 `0.7096`，产生过结构类正信号，但没有稳定超过 baseline。
 - v13 保存代码复跑并把 `clip_grad` 放宽到 2.0 后 best 为 `0.7030`，说明单改梯度裁剪不能突破。
 - v13b 更保守半径、更多候选邻居和 `clip_grad=2.0` 的组合 best 为 `0.6841`，属于策略失败。
@@ -27,7 +53,8 @@
 
 | 阶段 | 版本/实验 | 核心变化 | 结果与结论 |
 | --- | --- | --- | --- |
-| Baseline | 原始 KPConvX | 标准 KPConvX，S3DIS Area5 | best `0.7159`，当前最强可信基线 |
+| Baseline | 原始 KPConvX | 标准 KPConvX，S3DIS Area5 | 训练期随机 best `0.7159`；固定 best `0.6556`，作为旧尺度对照 |
+| Scale04 baseline | S3DIS 物理尺度校准 | 网格 0.04m，`kp_radius=kp_sigma=2.1`，其余 Pointcept 训练协议保持不变 | 固定协议 epoch 200 `0.6939`，当前新基线 |
 | 早期混合 | early hybrid | DA-Kernel、DA-Radius、SGCA、refine 同时加入 | 变量过多、归因困难，转向单模块消融 |
 | DA 初探 | v1-v4 | CUDA/Torch DA-Radius、不同 stage 和半径范围 | 证明动态半径路径可运行，但强度与 stage 高度敏感 |
 | 模块消融 | v5-v11 | DA-kernel、DA-radius、global、influence mode 的组合与拆分 | 简单叠加模块不能形成可靠主线 |

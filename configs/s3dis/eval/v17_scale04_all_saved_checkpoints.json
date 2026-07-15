@@ -1,0 +1,36 @@
+{
+  "protocol_version": "s3dis-fixed-v1",
+  "baseline_family": "v17-scale04-opportunistic",
+  "enable_tta_selection": false,
+  "runs": [
+    {
+      "family": "v17-scale04-opportunistic",
+      "run_id": "kpconvx-v17-scale04_20260714_1553",
+      "seed": null,
+      "checkpoints": [
+        "best",
+        "last",
+        "epoch_200",
+        "epoch_190",
+        "epoch_180",
+        "epoch_170",
+        "epoch_160",
+        "epoch_150",
+        "epoch_140",
+        "epoch_130",
+        "epoch_120",
+        "epoch_110",
+        "epoch_100",
+        "epoch_90",
+        "epoch_80",
+        "epoch_70",
+        "epoch_60",
+        "epoch_50",
+        "epoch_40",
+        "epoch_30",
+        "epoch_20",
+        "epoch_10"
+      ]
+    }
+  ]
+}

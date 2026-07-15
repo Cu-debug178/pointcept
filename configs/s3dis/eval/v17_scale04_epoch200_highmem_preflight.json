@@ -1,0 +1,13 @@
+{
+  "protocol_version": "s3dis-fixed-v1",
+  "baseline_family": "v17-scale04-opportunistic",
+  "enable_tta_selection": false,
+  "runs": [
+    {
+      "family": "v17-scale04-opportunistic",
+      "run_id": "kpconvx-v17-scale04_20260714_1553",
+      "seed": null,
+      "checkpoints": ["epoch_200"]
+    }
+  ]
+}

@@ -29,6 +29,7 @@ from tools.s3dis_fixed_protocol import (
     metadata_matches,
     metrics_from_counts,
     rank_families,
+    run_metadata_matches,
     select_tta_family,
     tta13_augmentations,
 )
@@ -192,6 +193,32 @@ class FixedProtocolTest(unittest.TestCase):
                 json.dumps(dict(**expected, runtime_seconds=1.2)), encoding="utf-8"
             )
             self.assertTrue(metadata_matches(output, expected))
+
+    def test_resume_metadata_accepts_symlink_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_root = root / "real"
+            real_root.mkdir()
+            checkpoint = real_root / "model_best.pth"
+            checkpoint.write_bytes(b"checkpoint")
+            alias_root = root / "alias"
+            alias_root.symlink_to(real_root, target_is_directory=True)
+            stat = checkpoint.stat()
+            actual = dict(
+                checkpoint=dict(
+                    path=str(alias_root / checkpoint.name),
+                    size=stat.st_size,
+                    mtime_ns=stat.st_mtime_ns,
+                )
+            )
+            expected = dict(
+                checkpoint=dict(
+                    path=str(checkpoint),
+                    size=stat.st_size,
+                    mtime_ns=stat.st_mtime_ns,
+                )
+            )
+            self.assertTrue(run_metadata_matches(actual, expected))
 
     def test_legacy_scale02_metadata_remains_resumable(self):
         with tempfile.TemporaryDirectory() as tmp:

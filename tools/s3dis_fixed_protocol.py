@@ -237,6 +237,33 @@ def expected_run_metadata(
     )
 
 
+def _file_identity_matches(actual, expected):
+    if not isinstance(actual, dict) or not isinstance(expected, dict):
+        return actual == expected
+    if actual.get("size") != expected.get("size"):
+        return False
+    if actual.get("mtime_ns") != expected.get("mtime_ns"):
+        return False
+    actual_path = actual.get("path")
+    expected_path = expected.get("path")
+    if actual_path is None or expected_path is None:
+        return actual_path == expected_path
+    return Path(actual_path).resolve() == Path(expected_path).resolve()
+
+
+def run_metadata_matches(actual, expected):
+    for key, value in expected.items():
+        # Results produced before scale04 support did not write grid_size. Those
+        # results always used the original fixed 0.02 m protocol.
+        actual_value = actual.get(key, 0.02 if key == "grid_size" else None)
+        if key in {"config", "checkpoint"}:
+            if not _file_identity_matches(actual_value, value):
+                return False
+        elif actual_value != value:
+            return False
+    return True
+
+
 def metadata_matches(output_dir, expected):
     output_dir = Path(output_dir)
     metrics_path = output_dir / "metrics.json"
@@ -248,13 +275,7 @@ def metadata_matches(output_dir, expected):
             actual = json.load(f)
     except (OSError, ValueError):
         return False
-    for key, value in expected.items():
-        # Results produced before scale04 support did not write grid_size. Those
-        # results always used the original fixed 0.02 m protocol.
-        actual_value = actual.get(key, 0.02 if key == "grid_size" else None)
-        if actual_value != value:
-            return False
-    return True
+    return run_metadata_matches(actual, expected)
 
 
 def atomic_write_json(path, data):

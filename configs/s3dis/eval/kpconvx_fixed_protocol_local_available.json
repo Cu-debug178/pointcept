@@ -1,0 +1,42 @@
+{
+  "protocol_version": "s3dis-fixed-v1",
+  "baseline_family": "baseline",
+  "runs": [
+    {
+      "family": "baseline",
+      "run_id": "s3dis-kpconvx-base-training_baseline",
+      "seed": null,
+      "checkpoints": ["best", "last"]
+    },
+    {
+      "family": "v13",
+      "run_id": "v13-da-radius-cuda-shadow-debug_20260520_2305",
+      "seed": 2435054,
+      "checkpoints": ["best", "last"]
+    },
+    {
+      "family": "v16-local",
+      "run_id": "v16-local-da-stat_20260609_1806",
+      "seed": null,
+      "checkpoints": ["best", "last"]
+    },
+    {
+      "family": "v16b",
+      "run_id": "v16b-controlled-support_20260618_1344",
+      "seed": 40979289,
+      "checkpoints": ["best", "last"]
+    },
+    {
+      "family": "v16b",
+      "run_id": "v16b-controlled-support-rerun_20260629_1846",
+      "seed": 19095314,
+      "checkpoints": ["best", "last"]
+    },
+    {
+      "family": "v17",
+      "run_id": "v17-dual-support_20260706_2303",
+      "seed": null,
+      "checkpoints": ["best", "last"]
+    }
+  ]
+}

@@ -27,8 +27,9 @@ PROJECT="${POINTCEPT_ROOT:-/root/autodl-tmp/Pointcept}"
 PYTHON_BIN="${POINTCEPT_PYTHON:-/root/autodl-tmp/envs/pointcept/bin/python}"
 EXP_ROOT="${POINTCEPT_EXP_ROOT:-$PROJECT/exp}"
 FIXED_ROOT="${POINTCEPT_FIXED_ROOT:-$EXP_ROOT/fixed_protocol}"
+MANIFEST="${POINTCEPT_FIXED_MANIFEST:-$PROJECT/configs/s3dis/eval/kpconvx_fixed_protocol_v1.json}"
 LOG_ROOT="$FIXED_ROOT/logs"
-RESULT_ROOT="$FIXED_ROOT/results/kpconvx-fixed-${SERVER_ID}"
+RESULT_ROOT="${POINTCEPT_FIXED_RESULT_ROOT:-$FIXED_ROOT/results/kpconvx-fixed-${SERVER_ID}}"
 BUNDLE_PATH="$FIXED_ROOT/bundles/kpconvx-fixed-${SERVER_ID}-compact.zip"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 RUN_LOG="$LOG_ROOT/fixed_${STAGE}_${SERVER_ID}_${TIMESTAMP}.log"
@@ -48,6 +49,8 @@ echo "server_id=$SERVER_ID"
 echo "stage=$STAGE"
 echo "project=$PROJECT"
 echo "python=$PYTHON_BIN"
+echo "manifest=$MANIFEST"
+echo "result_root=$RESULT_ROOT"
 echo "point_max=$POINT_MAX"
 echo "fragment_batch_size=$FRAGMENT_BATCH_SIZE"
 echo "num_workers=$NUM_WORKERS"
@@ -119,6 +122,7 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 export PYTHONUNBUFFERED=1
 
 COMMON_ARGS=(
+  --manifest "$MANIFEST"
   --exp-root "$EXP_ROOT"
   --output-root "$RESULT_ROOT"
   --point-max "$POINT_MAX"
@@ -157,6 +161,7 @@ TASK_EXIT=$?
 if [ "$TASK_EXIT" -eq 0 ] && [ -d "$RESULT_ROOT" ]; then
   "$PYTHON_BIN" -u tools/eval_s3dis_fixed_protocol.py \
     --stage bundle \
+    --manifest "$MANIFEST" \
     --output-root "$RESULT_ROOT" \
     --bundle-path "$BUNDLE_PATH" || true
 fi

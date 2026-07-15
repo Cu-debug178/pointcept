@@ -30,6 +30,7 @@ from tools.s3dis_fixed_protocol import (  # noqa: E402
     load_manifest,
     metadata_matches,
     rank_families,
+    run_metadata_matches,
     select_tta_entries,
     select_tta_family,
     write_csv,
@@ -95,6 +96,14 @@ def parse_args():
     )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--strict-local", action="store_true")
+    parser.add_argument(
+        "--allow-mixed-fragment-batch-sizes",
+        action="store_true",
+        help=(
+            "Allow summarizing completed runs that used different fragment batch "
+            "sizes. The batch size remains recorded per checkpoint in the CSV."
+        ),
+    )
     parser.add_argument("--max-rooms", type=int, default=None)
     parser.add_argument("--preflight-room", default="Area_5-conferenceRoom_3")
     parser.add_argument(
@@ -118,7 +127,14 @@ def parse_args():
     )
     parser.add_argument("--room-filter", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--run-meta-json", default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--cuda-memory-fraction", type=float, default=None, help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
+    if args.cuda_memory_fraction is not None and not (
+        0.0 < args.cuda_memory_fraction <= 1.0
+    ):
+        parser.error("--cuda-memory-fraction must be in (0, 1]")
     for checkpoint_kind in args.checkpoint_kinds or ():
         try:
             checkpoint_filename(checkpoint_kind)
@@ -205,6 +221,14 @@ def build_filtered_loader(cfg, room_filter=None, max_rooms=None):
 def run_worker(args):
     import torch
 
+    if args.cuda_memory_fraction is not None:
+        torch.cuda.set_per_process_memory_fraction(args.cuda_memory_fraction, 0)
+        print(
+            "CUDA allocator memory fraction: {:.3f}".format(
+                args.cuda_memory_fraction
+            )
+        )
+
     from pointcept.engines.test import SemSegTester
 
     cfg = configure_worker_cfg(args)
@@ -234,11 +258,19 @@ def run_worker(args):
 
 def local_inventory(args):
     manifest = load_manifest(args.manifest)
-    entries, missing = build_checkpoint_entries(
-        manifest,
-        args.exp_root,
-        allow_missing=not args.strict_local,
-    )
+    if args.strict_local:
+        entries = build_checkpoint_entries(
+            manifest,
+            args.exp_root,
+            allow_missing=False,
+        )
+        missing = []
+    else:
+        entries, missing = build_checkpoint_entries(
+            manifest,
+            args.exp_root,
+            allow_missing=True,
+        )
     checkpoint_kinds = getattr(args, "checkpoint_kinds", None)
     run_ids = getattr(args, "run_ids", None)
     if run_ids:
@@ -372,6 +404,10 @@ def worker_command(
         command.extend(["--room-filter", room_filter])
     if args.max_rooms is not None:
         command.extend(["--max-rooms", str(args.max_rooms)])
+    if args.cuda_memory_fraction is not None:
+        command.extend(
+            ["--cuda-memory-fraction", str(args.cuda_memory_fraction)]
+        )
     return command, metadata
 
 
@@ -401,8 +437,7 @@ def run_entry(
         if expected_path.is_file():
             with expected_path.open("r", encoding="utf-8") as f:
                 previous_expected = json.load(f)
-            previous_expected.setdefault("grid_size", 0.02)
-            resumable = previous_expected == expected
+            resumable = run_metadata_matches(previous_expected, expected)
         if not resumable and any(output_dir.iterdir()):
             raise RuntimeError(
                 f"Existing output metadata does not match the requested protocol: "
@@ -462,7 +497,39 @@ def fragment_batch_candidates(primary, fallbacks):
 
 
 def run_preflight(args, entries):
-    entry = find_entry(entries, "v17", "best")
+    manifest = load_manifest(args.manifest)
+    preferred_families = ["v17"]
+    baseline_family = manifest.get("baseline_family")
+    if baseline_family and baseline_family not in preferred_families:
+        preferred_families.append(baseline_family)
+
+    entry = None
+    for family in preferred_families:
+        matches = [
+            candidate
+            for candidate in entries
+            if candidate["family"] == family
+            and candidate["checkpoint_kind"] == "best"
+        ]
+        if len(matches) == 1:
+            entry = matches[0]
+            break
+    if entry is None:
+        best_entries = [
+            candidate
+            for candidate in entries
+            if candidate["checkpoint_kind"] == "best"
+        ]
+        if len(best_entries) == 1:
+            entry = best_entries[0]
+        elif len(entries) == 1:
+            entry = entries[0]
+        else:
+            raise RuntimeError(
+                "Preflight requires exactly one preferred or unambiguous best "
+                "checkpoint, or one unambiguous checkpoint of another kind; "
+                f"found {len(best_entries)} best entries and {len(entries)} total"
+            )
     root = Path(args.output_root) / "preflight"
     for point_max in (args.point_max, args.fallback_point_max):
         for fragment_batch_size in fragment_batch_candidates(
@@ -570,7 +637,10 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
         raise RuntimeError(f"Mixed point_max values in {stage_dir}: {point_limits}")
     if len(grid_sizes) != 1:
         raise RuntimeError(f"Mixed grid_size values in {stage_dir}: {grid_sizes}")
-    if len(fragment_batch_sizes) != 1:
+    if (
+        len(fragment_batch_sizes) != 1
+        and not args.allow_mixed_fragment_batch_sizes
+    ):
         raise RuntimeError(
             f"Mixed fragment batch sizes in {stage_dir}: {fragment_batch_sizes}"
         )
@@ -653,6 +723,7 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
         missing=[list(key) for key in missing_keys],
         unexpected=[list(key) for key in unexpected_keys],
         selected_family=selected_family,
+        fragment_batch_sizes_test=sorted(fragment_batch_sizes),
     )
     atomic_write_json(stage_dir / "completeness.json", completeness)
     print(

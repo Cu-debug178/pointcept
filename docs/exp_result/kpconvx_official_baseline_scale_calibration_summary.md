@@ -174,12 +174,34 @@ scripts/train_route2_scale04.sh
 
 scale04 epoch 200 相对旧 baseline 提升 `+0.0384` mIoU，远高于预设的
 `+0.005` 成功阈值，确认物理尺度失配是此前 Pointcept KPConvX 基线的主要
-问题之一。下一步应按路线二原计划训练同协议 scale04 v17，并以 scale04
-plain KPConvX `0.6939` 为唯一直接对照。若 scale04 v17 达不到 `0.6989`
-且重点边界类没有净改善，则说明旧尺度下的 v17 收益主要是在补偿尺度失配，
-不应继续扩展 dual-support 路线。其他官方 S3DIS kernel 参数对齐降为后续
-辅助消融，不插入这组已设计好的跨尺度机制验证之前。
+问题之一。随后按路线二预注册方案训练同协议 scale04 v17，并以 scale04
+plain KPConvX `0.6939` 为唯一直接对照。预注册成功门槛为 `0.6989`，同时
+要求重点边界类没有净下降；实际裁决见第 9 节。
 
-为提高固定协议 checkpoint 曲线的时间分辨率，待训练的 scale04 v17 改为
+为提高固定协议 checkpoint 曲线的时间分辨率，scale04 v17 训练时改为
 每 10 个日志 epoch 保存一次。该变化不参与 forward、loss、backward、
 optimizer 或 scheduler，只增加可恢复权重；训练前要求实验盘至少保留 6 GiB。
+
+## 9. scale04-v17 实际结果（2026-07-15）
+
+scale04-v17 已完成 epoch 10 到 200、model_best 和 model_last 共 22 个权重的
+固定全场景复评，完整性为 `22/22`。
+
+| 模型/权重 | fixed mIoU | mAcc | OA |
+| --- | ---: | ---: | ---: |
+| scale04 baseline epoch 200 | 0.693926 | **0.760752** | 0.902378 |
+| scale04-v17 epoch 160 | **0.693936** | 0.753759 | **0.906361** |
+| scale04-v17 model_best epoch 191 | 0.684036 | 0.748859 | 0.902352 |
+| scale04-v17 epoch 200 / last | 0.681965 | 0.748713 | 0.901342 |
+
+scale04-v17 的最高 mIoU 只比 baseline 高 `0.000010`，远低于预注册的
+`+0.005` 门槛，属于实质持平；最后权重反而低 `0.011961`。类别上 door、
+table、clutter 有提升，但 sofa、window、column、board 明显下降，边界类约束
+也未满足。因此尺度校准后，旧 v17 的固定提升没有复现，不继续扩展
+dual-support 主线。
+
+checkpoint 时间显示该实验约 23.7 小时完成，而旧 0.02m v17 为 44.52 小时。
+评估配置确认仍是 `KPConvXV17`、stage4 dual-support 和 13,999,028 参数，
+不是误跑 baseline。提速的主要解释是 0.04m 体素化减少了进入双路径聚合的
+活跃点；准确 batch time、点数分布和 gate/residual 训练动态仍需原始
+`train.log` 核验。

@@ -1,6 +1,6 @@
 # KPConvX 全部实验结果汇总
 
-更新时间：2026-07-14
+更新时间：2026-07-15
 
 ## 1. 文档目的
 
@@ -56,8 +56,13 @@ GridSample(mode="train")
    旧 baseline 随机 best `0.7159`，单次 `0.7161` 不能作为稳定提升。
 5. v17 expanded residual 在训练后期确实启用，但推理期 alpha 从 0 到 1
    只带来不超过 `0.0008` 的变化，简单调弱 residual 不能修复该路线。
-6. 当前正在训练同协议的 **scale04-v17**，用于判断旧尺度下 v17 的固定
-   提升能否跨尺度保留。结果尚未产生，不能提前下结论。
+6. **scale04-v17 已完成 22/22 个 checkpoint 的固定复评**。最高点是
+   epoch 160 的 `mIoU=0.693936`，scale04 baseline epoch 200 为
+   `0.693926`，差值仅 `+0.000010`，远低于预注册的 `+0.005` 门槛，不能
+   称为提升。
+7. scale04-v17 的 epoch 200 为 `0.681965`，比 baseline epoch 200 低
+   `0.011961`；训练期随机选择的 model_best（epoch 191）固定结果也只有
+   `0.684036`。这说明 dual-support 带来中期峰值，但没有形成稳定的后期收益。
 
 这里的 scale04 只校准了 Pointcept 管线中的 S3DIS 物理尺度，包括
 `grid_size=0.04`、`subsample_size=0.04`、`kp_radius=kp_sigma=2.1`。它仍使用
@@ -93,7 +98,7 @@ Pointcept 的数据增强、CE+Lovasz、OneCycleLR 和 4090D 训练预算，不�
 | v16b seed 19095314 | 同一 controlled support，不同 seed | 200/200，完成 | `0.7000 / 0.5961` | `0.6560 / 0.6538` | final 回落明显，显示高方差 |
 | v17 dual-support | original support 保底，expanded support 做 gated residual | 200/200，完成 | `0.7084 / 0.5861` | `0.6685 / 0.6677` | 旧尺度固定结果最好，但训练慢且随机验证没有净收益 |
 | scale04 baseline | 只校准 S3DIS 物理尺度到 0.04m | 200/200，完成 | `0.7204 / 未作为主结果` | `0.6863@best / 0.6939@last` | 当前最强可信基线；epoch 200 高于随机 val 选择的 epoch 193 |
-| scale04-v17 | scale04 baseline 上加入同一 v17 dual-support | 云端训练中 | 待定 | 待定 | 当前主实验，成功门槛为固定 mIoU 至少 `0.6989` |
+| scale04-v17 | scale04 baseline 上加入同一 v17 dual-support | 200/200，固定复评 22/22 完成 | 原始训练日志待补 | `0.693936@160 / 0.681965@last` | 未达到 `0.6989`；最高点与 baseline 实质持平，后期回落 |
 
 ## 5. 配置级实验与未形成独立结果的版本
 
@@ -129,6 +134,7 @@ Pointcept 的数据增强、CE+Lovasz、OneCycleLR 和 4090D 训练预算，不�
 | v16b seed 50040149 | 167 | 0.7032 | 0.6642 | `0.6586 / 0.0287` | 26.55h |
 | v16b seed 19095314 | 146 | 0.7000 | 0.5961 | `0.6401 / 0.0308` | 29.39h |
 | v17 | 193 | 0.7084 | 0.5861 | `0.6514 / 0.0345` | 44.52h |
+| scale04-v17 | fixed peak 160 | 原始随机指标待补 | fixed last 0.6820 | fixed 160-200 波动 | 约 23.7h（checkpoint 时间估算） |
 
 主要判断：
 
@@ -139,6 +145,10 @@ Pointcept 的数据增强、CE+Lovasz、OneCycleLR 和 4090D 训练预算，不�
   主要原因是 stage4 original/expanded 两次邻域聚合，不是参数量本身；
 - v17 后期 `gamma≈0.706`、`gate_mean≈0.508`、`residual_ratio≈0.13`、
   `extra_util≈0.69`，说明 expanded branch 确实参与了训练。
+- scale04-v17 从运行目录时间到 epoch 200 约 23 小时 44 分，epoch 10 到
+  epoch 200 的 checkpoint 时间差为 22.49 小时，比旧 v17 的 44.52 小时短
+  约 47%。评估配置确认 dual-support 仍启用；准确 batch time 和训练期 gate
+  监控仍需原始 `train.log` 核验。
 
 ## 7. 固定全场景复评结果
 
@@ -180,6 +190,50 @@ v16b seed 50040149 的 fixed best/last 尚未补齐，因此不能形成完整�
 
 随机验证选择的 epoch 193 并不是固定协议最优点，epoch 200 高 `0.0076`。
 这证明训练期随机验证不影响优化过程，但会影响 checkpoint 选择。
+
+### 7.3 scale04-v17 全周期
+
+本次归档包含 epoch 10 到 200、model_best 和 model_last，共 22 个 checkpoint，
+`completeness.json` 记录为 `complete=true, completed=22, expected=22`。
+
+| Checkpoint | Epoch | fixed mIoU | mAcc | OA |
+| --- | ---: | ---: | ---: | ---: |
+| epoch 10 | 10 | 0.4954 | 0.6095 | 0.8165 |
+| epoch 20 | 20 | 0.6041 | 0.6706 | 0.8640 |
+| epoch 30 | 30 | 0.5810 | 0.6672 | 0.8692 |
+| epoch 40 | 40 | 0.6146 | 0.6951 | 0.8593 |
+| epoch 50 | 50 | 0.6009 | 0.6807 | 0.8710 |
+| epoch 60 | 60 | 0.6345 | 0.7276 | 0.8782 |
+| epoch 70 | 70 | 0.6455 | 0.7418 | 0.8741 |
+| epoch 80 | 80 | 0.6586 | 0.7524 | 0.8930 |
+| epoch 90 | 90 | 0.6484 | 0.7413 | 0.8850 |
+| epoch 100 | 100 | 0.6678 | 0.7573 | 0.8903 |
+| epoch 110 | 110 | 0.6515 | 0.7313 | 0.8771 |
+| epoch 120 | 120 | 0.6455 | 0.7307 | 0.8795 |
+| epoch 130 | 130 | 0.6525 | 0.7236 | 0.8857 |
+| epoch 140 | 140 | 0.6602 | 0.7232 | 0.8955 |
+| epoch 150 | 150 | 0.6615 | 0.7293 | 0.8923 |
+| **epoch 160** | **160** | **0.693936** | **0.7538** | **0.9064** |
+| epoch 170 | 170 | 0.6827 | 0.7469 | 0.9021 |
+| epoch 180 | 180 | 0.6753 | 0.7459 | 0.8997 |
+| epoch 190 | 190 | 0.6848 | 0.7493 | 0.9017 |
+| model_best | 191 | 0.6840 | 0.7489 | 0.9024 |
+| epoch 200 / model_last | 200 | 0.6820 | 0.7487 | 0.9013 |
+
+### 7.4 与 scale04 baseline 的直接裁决
+
+| 比较项 | scale04 baseline | scale04-v17 | 差值 |
+| --- | ---: | ---: | ---: |
+| 共同 20-epoch 网格内最高 mIoU | 0.693926 @ 200 | 0.693936 @ 160 | **+0.000010** |
+| 对应 mAcc | **0.760752** | 0.753759 | -0.006994 |
+| 对应 OA | 0.902378 | **0.906361** | +0.003984 |
+| model_best 固定 mIoU | **0.686318** | 0.684036 | -0.002282 |
+| model_last 固定 mIoU | **0.693926** | 0.681965 | -0.011961 |
+
+v17 没有达到预注册目标 `0.6989`。虽然 epoch 160 的 OA 更高，但 mIoU 只比
+baseline 多 `0.000010`，同时 mAcc 更低；这个差异远小于单 seed 和 checkpoint
+波动，必须判定为实质持平。160 之后连续回落，说明 dual-support 改变了训练
+轨迹或收敛时点，但没有提高最终可信上限。
 
 ## 8. 类别级结论
 
@@ -237,6 +291,31 @@ v16b seed 50040149 的 fixed best/last 尚未补齐，因此不能形成完整�
 尺度校准显著改善了 door/window/column 等重点类别，但 beam 仍完全失败，
 table 也有回落。后续仍需要专门处理稀有细长类，而不是只扩大整体感受野。
 
+### 8.5 scale04-v17 epoch 160 相对 scale04 baseline epoch 200
+
+主要提升：
+
+| 类别 | IoU 变化 |
+| --- | ---: |
+| door | +0.0459 |
+| table | +0.0369 |
+| clutter | +0.0243 |
+| ceiling | +0.0133 |
+| bookcase | +0.0080 |
+
+主要下降：
+
+| 类别 | IoU 变化 |
+| --- | ---: |
+| sofa | -0.0480 |
+| window | -0.0339 |
+| column | -0.0311 |
+| board | -0.0145 |
+
+beam 在两者中均为 0。v17 没有满足“door/window/column/board/clutter 不出现
+明显下降”的类别约束：door 和 clutter 改善，但 window、column、board
+回落，sofa 下降最大。这是类别重分配，不是总体能力提升。
+
 ## 9. v17 推理期 alpha 消融
 
 该实验不重新训练，只在同一 checkpoint 上设置：
@@ -273,32 +352,42 @@ alpha sweep 的绝对数值来自该诊断工具自己的固定设置，只用�
    但计算成本高，旧训练协议下也没有稳定随机验证收益。
 7. 物理尺度校准目前是最大、最可信的提升来源，但它属于基线修正，不是结构
    创新。
-8. scale04-v17 是当前必须完成的隔离变量实验：它将决定旧 v17 提升究竟是
-   独立机制收益，还是主要在补偿 0.02m 尺度失配。
+8. scale04-v17 已完成该隔离变量验证：其最高 fixed mIoU 与 scale04 baseline
+   只差 `+0.000010`，final 反而低 `0.011961`。现有证据不支持继续把
+   dual-support 作为提升 mIoU 的主线，旧 0.02m 下的正信号更可能包含尺度
+   补偿和 checkpoint 选择效应。
 
-## 11. 当前实验与判定规则
+## 11. scale04-v17 最终裁决与训练耗时
 
-当前云端运行：
+已完成实验：
 
 ```text
 semseg-kpconvx-hybrid-v17-scale04-4090d-area5
 ```
 
-该实验保持 scale04 baseline 的数据、优化器、训练轮次和物理尺度，只增加
-v17 dual-support。v17 每 10 个日志 epoch 保存一次；正式主对比仍使用双方
-共同拥有的 `20/40/.../200 + model_best/model_last`，额外 checkpoint 只用于
-曲线诊断。
+该实验保持 scale04 baseline 的数据、优化器、200 个日志 epoch 和物理尺度，
+只增加 v17 dual-support。固定评估已经证明它没有达到 `+0.005` 成功门槛，
+且 window/column/board/sofa 存在明显类别下降，因此判定为未成功。
 
-成功条件：
+评估日志已确认：
 
-- fixed identity mIoU 至少达到 `0.6989`，即超过 scale04 baseline
-  `0.6939` 至少 `+0.005`；
-- door/window/column/board/clutter 不出现明显净下降；
-- 不能只依赖 beam 等高波动类别；
-- 必须同时报告固定协议、per-class、best/last 和训练成本。
+- backbone 为 `KPConvXV17`；
+- `enable_dual_support=True`，只开 stage4；
+- 参数量为 13,999,028；
+- `subsample_size=0.04`，候选邻居上限仍为 24；
+- warmup/ramp、gamma 初始化和 gate 初始化与旧 v17 一致。
 
-若未达到这些条件，则旧 0.02m 下 v17 的正信号更可能与尺度补偿有关，不应
-继续扩展 dual-support 主线。
+所以不到 24 小时不是因为误跑成 baseline。当前最合理的速度解释是：训练
+GridSample 从 0.02m 改到 0.04m 后，进入 KPConvX 金字塔的活跃点显著减少，
+original/expanded 两条 stage4 聚合路径都随之变便宜。保存频率从 20 改为 10
+只增加少量 I/O，不会使训练提速。
+
+目前仍缺原始 `train.log`，因此以下项目暂不能精确报告：
+
+- 平均 batch/data time 及其与旧 v17 的倍率；
+- 每个 batch 的实际点数分布；
+- scale04-v17 后期 `dual_progress/gamma/gate_mean/residual_ratio/extra_util`；
+- 训练期随机 best、final 和 tail20 统计。
 
 ## 12. 数据来源
 
@@ -315,5 +404,8 @@ v17 dual-support。v17 每 10 个日志 epoch 保存一次；正式主对比仍�
 - `exp/v16b-controlled-support_*/train.log`
 - `exp/v17-dual-support_20260706_2303/train.log`
 - `exp/kpconvx-scale04-baseline_20260710_2057/train.log`
+- `exp/v17-scale04-concurrent-screening/screen/checkpoint_summary.csv`
+- `exp/v17-scale04-concurrent-screening/screen/class_metrics.csv`
+- `exp/v17-scale04-concurrent-screening/**/metrics.json`
 
 原始模型、配置、日志和 TensorBoard 文件仍保存在 `exp/` 对应实验目录中。

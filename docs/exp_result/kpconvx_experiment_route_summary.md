@@ -1,6 +1,6 @@
 # KPConvX 改进实验总路线
 
-更新时间：2026-07-14
+更新时间：2026-07-15
 
 ## 2026-07-14 固定协议补充结论
 
@@ -27,14 +27,16 @@
 完整数据见
 [`s3dis_fixed_protocol_results_20260714.md`](s3dis_fixed_protocol_results_20260714.md)。
 
-路线二下一步保持原设计：训练同一 scale04 数据与优化协议下的 v17，验证
-旧 0.02m 固定协议中 v17 相对 baseline 的 `+0.0130` 是否能够跨尺度保留。
-成功门槛是相对 scale04 baseline `0.6939` 至少提高 `+0.005`，即达到
-`0.6989`，同时 door/window/column/board/clutter 不出现明显净下降。
+路线二 scale04-v17 已完成 22/22 个 checkpoint 的固定全场景复评。其最高点
+是 epoch 160 的 `0.693936`，scale04 baseline epoch 200 为 `0.693926`，差值
+只有 `+0.000010`，远低于 `+0.005` 成功门槛；v17 last 为 `0.681965`，比
+baseline last 低 `0.011961`。因此旧 0.02m 下 v17 的 `+0.0130` 没有跨尺度
+复现，dual-support 不再作为下一轮 mIoU 提升主线。
 
-scale04 baseline 已按每 20 个日志 epoch 保存并完成。待训练的 scale04 v17
-改为每 10 个日志 epoch 保存，以补足后期固定全场景曲线；正式主对比仍限定在
-双方共同拥有的 `20/40/.../200 + model_best/model_last`，其余权重仅作诊断。
+类别上，epoch160 v17 提升 door/table/clutter，但下降 sofa/window/column/board，
+也没有满足预注册的边界类约束。训练耗时从旧 v17 的 44.52h 降到约 23.7h，
+评估配置确认 dual-support 仍启用；提速主要由 0.04m 网格减少活跃点导致，
+准确吞吐和后期 gate 指标待原始 `train.log` 补齐。
 
 ## 当前总判断
 
@@ -55,8 +57,13 @@ scale04 baseline 已按每 20 个日志 epoch 保存并完成。待训练的 sca
 - v16b controlled support 三个 seed 的 best 为 `0.7161 / 0.7032 / 0.7000`，均值约 `0.7064`；唯一超过 baseline 的结果只高 `0.0002`，属于高方差峰值，不能作为稳定提升。
 - v17 dual-support best 为 `0.7084`，训练约 `44.52h`，比 baseline 慢约 `1.85x`；没有带来净收益。
 - v17 inference alpha sweep 中，`alpha=0~1` 的 mIoU 差异不超过 `0.0008`。这否定了“只要把推理期 residual 调弱就能明显修复 v17”的推测。
+- scale04-v17 fixed peak 为 `0.693936@160`，与 scale04 baseline
+  `0.693926@200` 实质持平，last 下降到 `0.681965`；跨尺度验证未通过。
 
-因此，下一步不能再把已有路线换名重跑，也不能默认“选择性 support”一定正确。需要先让新的外部判断回答：alpha 几乎无效究竟表示 support 分支没有价值，还是训练期已经让主干与该分支共同适配，导致推理期开关无法分离训练历史。
+因此，现有 support 扩展路线已经完成从 hard mask、identity-preserving residual、
+alpha 诊断到 scale04 跨尺度验证的闭环，不能再换名重跑。下一步应在正确的
+scale04 基线上重新选择独立方向，例如主干审计、原生 PTv3 benchmark 或新的
+全局机制，而不是继续扩大 support 或只调整 gamma。
 
 ## 版本时间线
 
@@ -64,6 +71,7 @@ scale04 baseline 已按每 20 个日志 epoch 保存并完成。待训练的 sca
 | --- | --- | --- | --- |
 | Baseline | 原始 KPConvX | 标准 KPConvX，S3DIS Area5 | 训练期随机 best `0.7159`；固定 best `0.6556`，作为旧尺度对照 |
 | Scale04 baseline | S3DIS 物理尺度校准 | 网格 0.04m，`kp_radius=kp_sigma=2.1`，其余 Pointcept 训练协议保持不变 | 固定协议 epoch 200 `0.6939`，当前新基线 |
+| Scale04 v17 | 物理尺度校准后的 dual-support 验证 | 同 scale04 协议，只增加 stage4 dual-support | fixed peak `0.693936@160`，last `0.681965`；未超过 baseline 的可信门槛 |
 | 早期混合 | early hybrid | DA-Kernel、DA-Radius、SGCA、refine 同时加入 | 变量过多、归因困难，转向单模块消融 |
 | DA 初探 | v1-v4 | CUDA/Torch DA-Radius、不同 stage 和半径范围 | 证明动态半径路径可运行，但强度与 stage 高度敏感 |
 | 模块消融 | v5-v11 | DA-kernel、DA-radius、global、influence mode 的组合与拆分 | 简单叠加模块不能形成可靠主线 |
@@ -169,14 +177,17 @@ scale04 baseline 已按每 20 个日志 epoch 保存并完成。待训练的 sca
 
 ## 当前决策点
 
-上一轮 Pro 的第一阶段诊断已经完成，结果落入“所有 alpha 基本相同”分支。按照它原来的决策规则，不应直接训练 strength-constrained v17。现在真正需要外部模型判断的是：
+scale04-v17 已使“是否暂停 support 扩展”从开放问题变成工程结论：作为下一轮
+长训主线应暂停。当前真正需要决定的是：
 
-- 是否应彻底暂停 support 扩展路线；
-- 是否需要先做一个更便宜的训练历史/固定验证诊断；
-- 如果仍做选择性邻域，怎样保证它不是 v16b/v17 的换名重复；
-- 如果转向全局机制，应该先跑 PTv3 backbone benchmark，还是设计与 KPConvX 内部一致的 context operator；
-- 在单张 4090D、导师催进度的条件下，哪个单一实验信息增益最高、最可能提升 mIoU。
+- 是否继续完成 Apple Standalone S3DIS 的其他训练协议对齐；
+- 是否先做原生或近原生 PTv3 backbone benchmark；
+- 是否在 scale04 KPConvX 上设计独立、低成本的全局机制；
+- 哪一个单一实验在一张 4090D 上最可能提高 mIoU，同时能形成论文归因。
 
 ## 一句话总结
 
-路线已经从“继续堆模块”推进到一个明确的否定性节点：DA-meta、hard controlled support 和 dual-support residual 都没有稳定超过 baseline，v17 推理期 alpha 也不是有效修复旋钮。下一步必须基于这一完整证据重新选方向，而不是继续沿旧 support 路线做低信息量调参。
+路线已经得到明确裁决：DA-meta、hard controlled support 和 dual-support
+residual 都没有稳定超过校准后的 baseline，v17 推理期 alpha 也不是有效修复
+旋钮，scale04 跨尺度验证最终实质持平。下一步必须在 scale04 基线上选择新的
+独立方向，而不是继续沿旧 support 路线做低信息量调参。

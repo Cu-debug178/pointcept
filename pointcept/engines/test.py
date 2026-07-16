@@ -251,6 +251,8 @@ class SemSegTester(TesterBase):
                     s_i, e_i = i, min(i + fragment_batch_size, len(fragment_list))
                     fragment_batch_idx = i // fragment_batch_size + 1
                     input_dict = collate_fn(fragment_list[s_i:e_i])
+                    fragment_vote_weights = input_dict.pop("vote_weight", None)
+                    input_dict.pop("vote_index", None)
 
                     for key in input_dict.keys():
                         if isinstance(input_dict[key], torch.Tensor):
@@ -266,8 +268,23 @@ class SemSegTester(TesterBase):
                             pred_part = F.softmax(pred_part, -1)
 
                             bs = 0
-                            for be in input_dict["offset"].tolist():
-                                pred[idx_part[bs:be], :] += pred_part[bs:be]
+                            offsets = input_dict["offset"].tolist()
+                            if (
+                                fragment_vote_weights is not None
+                                and fragment_vote_weights.numel() != len(offsets)
+                            ):
+                                raise RuntimeError(
+                                    "Expected one vote weight per fragment, got "
+                                    f"{fragment_vote_weights.numel()} weights for "
+                                    f"{len(offsets)} fragments"
+                                )
+                            for fragment_index, be in enumerate(offsets):
+                                pred_fragment = pred_part[bs:be]
+                                if fragment_vote_weights is not None:
+                                    pred_fragment = pred_fragment * float(
+                                        fragment_vote_weights[fragment_index].item()
+                                    )
+                                pred[idx_part[bs:be], :] += pred_fragment
                                 bs = be
                     finally:
                         if pred_part is not None:

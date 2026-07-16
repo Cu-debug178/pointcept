@@ -14,6 +14,11 @@ import numpy as np
 
 
 PROTOCOL_VERSION = "s3dis-fixed-v1"
+OFFICIAL_VOTE_COUNT = 10
+OFFICIAL_VOTE_MOMENTUM = 0.95
+OFFICIAL_VOTE_SEED = 0
+TTA13_SIGNATURE = "rot4-scale3-xflip-v2"
+OFFICIAL_VOTE_SIGNATURE = "apple-s3dis-geom-vote-v1"
 RISK_CLASSES = ("door", "window", "column", "wall", "clutter")
 POSITIVE_CLASSES = ("beam", "board", "table", "chair", "sofa")
 CHECKPOINT_KIND_PATTERN = re.compile(r"^epoch_([1-9][0-9]*)$")
@@ -63,19 +68,113 @@ def tta13_augmentations():
             if scale is not None:
                 transforms.append(dict(type="RandomScale", scale=[scale, scale]))
             augmentations.append(transforms)
-    augmentations.append([dict(type="RandomFlip", p=1)])
+    augmentations.append([dict(type="RandomFlipAxis", axis="x", p=1)])
     return augmentations
 
 
-def protocol_augmentations(protocol):
+def official_vote_weights(
+    vote_count=OFFICIAL_VOTE_COUNT,
+    momentum=OFFICIAL_VOTE_MOMENTUM,
+):
+    vote_count = int(vote_count)
+    momentum = float(momentum)
+    if vote_count < 1:
+        raise ValueError("vote_count must be positive")
+    if not 0.0 <= momentum < 1.0:
+        raise ValueError("momentum must be in [0, 1)")
+    return [
+        (1.0 - momentum) * momentum ** (vote_count - 1 - vote_index)
+        for vote_index in range(vote_count)
+    ]
+
+
+def official_vote_augmentations(
+    vote_count=OFFICIAL_VOTE_COUNT,
+    momentum=OFFICIAL_VOTE_MOMENTUM,
+    seed=OFFICIAL_VOTE_SEED,
+):
+    """Build one reproducible draw of Apple's stochastic S3DIS test votes."""
+    rng = np.random.RandomState(int(seed))
+    weights = official_vote_weights(vote_count, momentum)
+    augmentations = []
+    for vote_index, vote_weight in enumerate(weights):
+        scale = float(rng.uniform(0.99, 1.01))
+        flip_x = bool(rng.rand() < 0.5)
+        angle = float(rng.rand() * 2.0)
+        augmentations.append(
+            [
+                dict(type="RandomScale", scale=[scale, scale]),
+                dict(type="RandomFlipAxis", axis="x", p=1 if flip_x else 0),
+                dict(
+                    type="RandomRotateTargetAngle",
+                    angle=[angle],
+                    axis="z",
+                    center=[0, 0, 0],
+                    p=1,
+                ),
+                dict(
+                    type="Update",
+                    keys_dict=dict(
+                        vote_index=int(vote_index),
+                        vote_weight=float(vote_weight),
+                    ),
+                ),
+            ]
+        )
+    return augmentations
+
+
+def protocol_augmentations(
+    protocol,
+    vote_count=OFFICIAL_VOTE_COUNT,
+    vote_momentum=OFFICIAL_VOTE_MOMENTUM,
+    augmentation_seed=OFFICIAL_VOTE_SEED,
+):
     if protocol == "identity":
         return identity_augmentations()
     if protocol == "tta13":
         return tta13_augmentations()
+    if protocol == "official_vote10":
+        return official_vote_augmentations(
+            vote_count=vote_count,
+            momentum=vote_momentum,
+            seed=augmentation_seed,
+        )
     raise ValueError(f"Unknown protocol: {protocol}")
 
 
-def canonical_test_cfg(point_max, protocol, grid_size=0.02):
+def protocol_metadata(
+    protocol,
+    vote_count=OFFICIAL_VOTE_COUNT,
+    vote_momentum=OFFICIAL_VOTE_MOMENTUM,
+    augmentation_seed=OFFICIAL_VOTE_SEED,
+):
+    if protocol == "identity":
+        return {}
+    if protocol == "tta13":
+        return dict(augmentation_signature=TTA13_SIGNATURE)
+    if protocol == "official_vote10":
+        return dict(
+            official_like=True,
+            augmentation_signature=OFFICIAL_VOTE_SIGNATURE,
+            vote_count=int(vote_count),
+            vote_momentum=float(vote_momentum),
+            augmentation_seed=int(augmentation_seed),
+        )
+    raise ValueError(f"Unknown protocol: {protocol}")
+
+
+def canonical_test_cfg(
+    point_max,
+    protocol,
+    grid_size=0.02,
+    vote_count=OFFICIAL_VOTE_COUNT,
+    vote_momentum=OFFICIAL_VOTE_MOMENTUM,
+    augmentation_seed=OFFICIAL_VOTE_SEED,
+):
+    collect_keys = ["coord", "index"]
+    if protocol == "official_vote10":
+        collect_keys.extend(["vote_index", "vote_weight"])
     return dict(
         voxelize=dict(
             type="GridSample",
@@ -89,11 +188,16 @@ def canonical_test_cfg(point_max, protocol, grid_size=0.02):
             dict(type="ToTensor"),
             dict(
                 type="Collect",
-                keys=("coord", "index"),
+                keys=tuple(collect_keys),
                 feat_keys=("coord", "color", "normal"),
             ),
         ],
-        aug_transform=protocol_augmentations(protocol),
+        aug_transform=protocol_augmentations(
+            protocol,
+            vote_count=vote_count,
+            vote_momentum=vote_momentum,
+            augmentation_seed=augmentation_seed,
+        ),
     )
 
 
@@ -221,8 +325,13 @@ def expected_run_metadata(
     point_max,
     fragment_batch_size_test=1,
     grid_size=0.02,
+    vote_count=OFFICIAL_VOTE_COUNT,
+    vote_momentum=OFFICIAL_VOTE_MOMENTUM,
+    augmentation_seed=OFFICIAL_VOTE_SEED,
+    room_filter=None,
+    max_rooms=None,
 ):
-    return dict(
+    metadata = dict(
         protocol_version=PROTOCOL_VERSION,
         protocol=protocol,
         grid_size=float(grid_size),
@@ -232,9 +341,20 @@ def expected_run_metadata(
         run_id=entry["run_id"],
         seed=entry.get("seed"),
         checkpoint_kind=entry["checkpoint_kind"],
+        room_filter=None if room_filter is None else str(room_filter),
+        max_rooms=None if max_rooms is None else int(max_rooms),
         config=file_identity(entry["config_path"]),
         checkpoint=file_identity(entry["weight_path"]),
     )
+    metadata.update(
+        protocol_metadata(
+            protocol,
+            vote_count=vote_count,
+            vote_momentum=vote_momentum,
+            augmentation_seed=augmentation_seed,
+        )
+    )
+    return metadata
 
 
 def _file_identity_matches(actual, expected):
@@ -344,6 +464,10 @@ def collect_stage_results(stage_dir, entries):
             seed=entry.get("seed"),
             checkpoint_kind=entry["checkpoint_kind"],
             epoch=metadata.get("checkpoint_epoch"),
+            augmentation_signature=metadata.get("augmentation_signature"),
+            vote_count=metadata.get("vote_count"),
+            vote_momentum=metadata.get("vote_momentum"),
+            augmentation_seed=metadata.get("augmentation_seed"),
         )
         checkpoint_rows.append(
             dict(

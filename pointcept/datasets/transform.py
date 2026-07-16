@@ -355,6 +355,29 @@ class RandomFlip(object):
 
 
 @TRANSFORMS.register_module()
+class RandomFlipAxis(object):
+    """Flip one selected axis without changing the other horizontal axis."""
+
+    _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
+
+    def __init__(self, axis="x", p=0.5):
+        if axis not in self._AXIS_TO_INDEX:
+            raise ValueError(f"Unsupported flip axis: {axis}")
+        self.axis = axis
+        self.p = float(p)
+
+    def __call__(self, data_dict):
+        if np.random.rand() >= self.p:
+            return data_dict
+        axis_index = self._AXIS_TO_INDEX[self.axis]
+        if "coord" in data_dict:
+            data_dict["coord"][:, axis_index] *= -1
+        if "normal" in data_dict:
+            data_dict["normal"][:, axis_index] *= -1
+        return data_dict
+
+
+@TRANSFORMS.register_module()
 class RandomJitter(object):
     def __init__(self, sigma=0.01, clip=0.05):
         assert clip > 0

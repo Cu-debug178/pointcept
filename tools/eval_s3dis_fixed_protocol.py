@@ -1,4 +1,4 @@
-"""Deterministic two-stage S3DIS evaluation for saved KPConvX experiments."""
+"""Reproducible S3DIS evaluation protocols for saved KPConvX experiments."""
 
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from tools.s3dis_fixed_protocol import (  # noqa: E402
+    OFFICIAL_VOTE_COUNT,
+    OFFICIAL_VOTE_MOMENTUM,
+    OFFICIAL_VOTE_SEED,
     PROTOCOL_VERSION,
     atomic_write_json,
     build_checkpoint_entries,
@@ -50,6 +53,7 @@ def parse_args():
             "preflight",
             "screen",
             "tta13",
+            "official_vote10",
             "bundle",
             "merge",
             "summarize",
@@ -77,6 +81,24 @@ def parse_args():
         default=(2, 1),
     )
     parser.add_argument("--fragment-log-interval-test", type=int, default=10)
+    parser.add_argument(
+        "--vote-count",
+        type=int,
+        default=OFFICIAL_VOTE_COUNT,
+        help="Number of seeded official-like stochastic votes.",
+    )
+    parser.add_argument(
+        "--vote-momentum",
+        type=float,
+        default=OFFICIAL_VOTE_MOMENTUM,
+        help="EMA momentum used to weight official-like votes.",
+    )
+    parser.add_argument(
+        "--augmentation-seed",
+        type=int,
+        default=OFFICIAL_VOTE_SEED,
+        help="Seed used to pre-sample reproducible official-like test views.",
+    )
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--selected-family", default=None)
     parser.add_argument(
@@ -123,7 +145,10 @@ def parse_args():
     parser.add_argument("--weight", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--save-path", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
-        "--protocol", choices=("identity", "tta13"), default=None, help=argparse.SUPPRESS
+        "--protocol",
+        choices=("identity", "tta13", "official_vote10"),
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--room-filter", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--run-meta-json", default=None, help=argparse.SUPPRESS)
@@ -135,12 +160,24 @@ def parse_args():
         0.0 < args.cuda_memory_fraction <= 1.0
     ):
         parser.error("--cuda-memory-fraction must be in (0, 1]")
+    if args.vote_count < 1:
+        parser.error("--vote-count must be positive")
+    if not 0.0 <= args.vote_momentum < 1.0:
+        parser.error("--vote-momentum must be in [0, 1)")
     for checkpoint_kind in args.checkpoint_kinds or ():
         try:
             checkpoint_filename(checkpoint_kind)
         except ValueError as error:
             parser.error(str(error))
     return args
+
+
+def vote_protocol_kwargs(args):
+    return dict(
+        vote_count=int(args.vote_count),
+        vote_momentum=float(args.vote_momentum),
+        augmentation_seed=int(args.augmentation_seed),
+    )
 
 
 def configure_worker_cfg(args):
@@ -174,7 +211,12 @@ def configure_worker_cfg(args):
     ]
     cfg.data.test.test_mode = True
     cfg.data.test.test_cfg = ConfigDict(
-        canonical_test_cfg(args.point_max, args.protocol, args.grid_size)
+        canonical_test_cfg(
+            args.point_max,
+            args.protocol,
+            args.grid_size,
+            **vote_protocol_kwargs(args),
+        )
     )
     return default_setup(cfg)
 
@@ -330,6 +372,10 @@ def local_inventory(args):
             run_ids=list(run_ids) if run_ids else None,
             screen_protocol="identity",
             tta_protocol="tta13",
+            official_like_protocol="official_vote10",
+            official_like_vote_count=int(args.vote_count),
+            official_like_vote_momentum=float(args.vote_momentum),
+            official_like_augmentation_seed=int(args.augmentation_seed),
             screen_expected_checkpoints=len(
                 expected_result_keys(
                     manifest,
@@ -370,6 +416,9 @@ def worker_command(
         point_max,
         fragment_batch_size_test,
         grid_size=args.grid_size,
+        room_filter=room_filter,
+        max_rooms=args.max_rooms,
+        **vote_protocol_kwargs(args),
     )
     metadata_path = output_dir / "expected_run_meta.json"
     atomic_write_json(metadata_path, metadata)
@@ -395,6 +444,12 @@ def worker_command(
         str(fragment_batch_size_test),
         "--fragment-log-interval-test",
         str(args.fragment_log_interval_test),
+        "--vote-count",
+        str(args.vote_count),
+        "--vote-momentum",
+        str(args.vote_momentum),
+        "--augmentation-seed",
+        str(args.augmentation_seed),
         "--run-meta-json",
         str(metadata_path),
     ]
@@ -427,6 +482,9 @@ def run_entry(
         point_max,
         fragment_batch_size_test,
         grid_size=args.grid_size,
+        room_filter=room_filter,
+        max_rooms=args.max_rooms,
+        **vote_protocol_kwargs(args),
     )
     if metadata_matches(output_dir, expected) and not args.overwrite:
         print(f"SKIP completed: {output_dir}")
@@ -628,7 +686,13 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
     fragment_batch_sizes = {
         int(row.get("fragment_batch_size_test", 1)) for row in checkpoint_rows
     }
-    expected_protocol = "identity" if stage_name == "screen" else "tta13"
+    expected_protocol = {
+        "screen": "identity",
+        "tta13": "tta13",
+        "official_vote10": "official_vote10",
+    }.get(stage_name)
+    if expected_protocol is None:
+        raise ValueError(f"Unknown summary stage: {stage_name}")
     if protocol_versions != {PROTOCOL_VERSION}:
         raise RuntimeError(f"Mixed protocol versions in {stage_dir}: {protocol_versions}")
     if protocols != {expected_protocol}:
@@ -686,7 +750,7 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
             )
         else:
             selected_family = None
-    else:
+    elif stage_name == "tta13" and manifest.get("enable_tta_selection", True):
         if selected_family is None:
             selection_path = Path(args.output_root) / "tta_selection.json"
             if not selection_path.is_file():
@@ -712,6 +776,14 @@ def summarize_stage(args, manifest, stage_name, selected_family=None):
                 report, encoding="utf-8"
             )
             atomic_write_json(Path(args.output_root) / "decision.json", decision)
+    else:
+        expected_keys = expected_result_keys(
+            manifest,
+            checkpoint_kinds=checkpoint_kinds,
+            run_ids=run_ids,
+        )
+        missing_keys = sorted(expected_keys - actual_keys, key=str)
+        unexpected_keys = sorted(actual_keys - expected_keys, key=str)
 
     missing_keys = sorted(expected_keys - actual_keys, key=str)
     unexpected_keys = sorted(actual_keys - expected_keys, key=str)
@@ -754,6 +826,7 @@ def merge_server_results(args, manifest):
             merged_from=[str(Path(path).resolve()) for path in args.merge_input],
             screen_protocol="identity",
             tta_protocol="tta13",
+            official_like_protocol="official_vote10",
             tta_family_limit=1,
         ),
     )
@@ -782,7 +855,7 @@ def merge_server_results(args, manifest):
                     f"{resource_decision} vs {current_value}"
                 )
 
-        for stage_name in ("screen", "tta13"):
+        for stage_name in ("screen", "tta13", "official_vote10"):
             source_stage = input_root / stage_name
             for entry in discover_completed_entries(source_stage):
                 source_dir = entry_output_dir(source_stage, entry)
@@ -831,6 +904,9 @@ def merge_server_results(args, manifest):
     tta_dir = output_root / "tta13"
     if tta_dir.is_dir():
         summarize_stage(args, manifest, "tta13", args.selected_family)
+    official_vote_dir = output_root / "official_vote10"
+    if official_vote_dir.is_dir():
+        summarize_stage(args, manifest, "official_vote10")
 
 
 def bundle_compact_results(args):
@@ -925,10 +1001,13 @@ def main():
     if args.stage == "summarize":
         screen_dir = Path(args.output_root) / "screen"
         tta_dir = Path(args.output_root) / "tta13"
+        official_vote_dir = Path(args.output_root) / "official_vote10"
         if screen_dir.is_dir():
             summarize_stage(args, manifest, "screen")
         if tta_dir.is_dir():
             summarize_stage(args, manifest, "tta13", args.selected_family)
+        if official_vote_dir.is_dir():
+            summarize_stage(args, manifest, "official_vote10")
         return 0
 
     manifest, entries, _ = local_inventory(args)
@@ -958,12 +1037,16 @@ def main():
             )
 
     if args.stage in {"tta13", "all"}:
-        selected_family = read_selected_family(args)
-        local_tta_entries = select_tta_entries(
-            entries,
-            selected_family,
-            baseline_family=manifest.get("baseline_family", "baseline"),
-        )
+        if manifest.get("enable_tta_selection", True):
+            selected_family = read_selected_family(args)
+            local_tta_entries = select_tta_entries(
+                entries,
+                selected_family,
+                baseline_family=manifest.get("baseline_family", "baseline"),
+            )
+        else:
+            selected_family = None
+            local_tta_entries = entries
         if not local_tta_entries:
             print(
                 "No local baseline or selected-family checkpoints are available "
@@ -979,6 +1062,20 @@ def main():
             fragment_batch_size_test=args.fragment_batch_size_test,
         )
         summarize_stage(args, manifest, "tta13", selected_family)
+    if args.stage == "official_vote10":
+        if not entries:
+            raise RuntimeError(
+                "No local checkpoints are available for official_vote10"
+            )
+        run_stage_entries(
+            args,
+            entries,
+            stage_name="official_vote10",
+            protocol="official_vote10",
+            point_max=args.point_max,
+            fragment_batch_size_test=args.fragment_batch_size_test,
+        )
+        summarize_stage(args, manifest, "official_vote10")
     return 0
 
 

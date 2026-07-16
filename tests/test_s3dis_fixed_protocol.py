@@ -19,6 +19,8 @@ from tools.eval_s3dis_fixed_protocol import (
     merge_server_results,
 )
 from tools.s3dis_fixed_protocol import (
+    OFFICIAL_VOTE_COUNT,
+    OFFICIAL_VOTE_MOMENTUM,
     PROTOCOL_VERSION,
     build_checkpoint_entries,
     canonical_test_cfg,
@@ -28,6 +30,8 @@ from tools.s3dis_fixed_protocol import (
     load_manifest,
     metadata_matches,
     metrics_from_counts,
+    official_vote_augmentations,
+    official_vote_weights,
     rank_families,
     run_metadata_matches,
     select_tta_family,
@@ -37,6 +41,40 @@ class FixedProtocolTest(unittest.TestCase):
     def test_augmentation_counts(self):
         self.assertEqual(len(identity_augmentations()), 1)
         self.assertEqual(len(tta13_augmentations()), 13)
+        self.assertEqual(
+            len(official_vote_augmentations()),
+            OFFICIAL_VOTE_COUNT,
+        )
+
+    def test_tta13_uses_single_axis_flip(self):
+        flip = tta13_augmentations()[-1][0]
+        self.assertEqual(flip["type"], "RandomFlipAxis")
+        self.assertEqual(flip["axis"], "x")
+
+    def test_official_vote_weights_match_zero_initialized_ema(self):
+        weights = official_vote_weights()
+        self.assertEqual(len(weights), OFFICIAL_VOTE_COUNT)
+        self.assertTrue(all(a < b for a, b in zip(weights, weights[1:])))
+        self.assertAlmostEqual(
+            sum(weights),
+            1.0 - OFFICIAL_VOTE_MOMENTUM ** OFFICIAL_VOTE_COUNT,
+        )
+
+    def test_official_votes_are_seeded_and_carry_weights(self):
+        first = official_vote_augmentations(seed=17)
+        second = official_vote_augmentations(seed=17)
+        third = official_vote_augmentations(seed=18)
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, third)
+        updates = [vote[-1]["keys_dict"] for vote in first]
+        self.assertEqual(
+            [update["vote_index"] for update in updates],
+            list(range(OFFICIAL_VOTE_COUNT)),
+        )
+        self.assertEqual(
+            [update["vote_weight"] for update in updates],
+            official_vote_weights(),
+        )
 
     def test_test_cfg_supports_attribute_access(self):
         try:
@@ -52,6 +90,13 @@ class FixedProtocolTest(unittest.TestCase):
         cfg = canonical_test_cfg(60000, "identity", grid_size=0.04)
         self.assertEqual(cfg["voxelize"]["grid_size"], 0.04)
         self.assertEqual(cfg["crop"]["point_max"], 60000)
+
+    def test_official_vote_cfg_collects_fragment_weights(self):
+        cfg = canonical_test_cfg(60000, "official_vote10", grid_size=0.04)
+        collect = cfg["post_transform"][-1]
+        self.assertIn("vote_index", collect["keys"])
+        self.assertIn("vote_weight", collect["keys"])
+        self.assertEqual(len(cfg["aug_transform"]), OFFICIAL_VOTE_COUNT)
 
     def test_fragment_batch_candidates_are_unique_and_ordered(self):
         self.assertEqual(fragment_batch_candidates(4, [2, 1, 2]), [4, 2, 1])
@@ -274,6 +319,60 @@ class FixedProtocolTest(unittest.TestCase):
             )
             self.assertEqual(scale04["grid_size"], 0.04)
             self.assertNotEqual(scale02, scale04)
+
+    def test_partial_room_metadata_cannot_resume_as_full_evaluation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.py"
+            checkpoint = root / "model_best.pth"
+            config.write_text("x = 1\n", encoding="utf-8")
+            checkpoint.write_bytes(b"checkpoint")
+            entry = dict(
+                family="baseline",
+                run_id="run",
+                seed=None,
+                checkpoint_kind="best",
+                config_path=str(config),
+                weight_path=str(checkpoint),
+            )
+            partial = expected_run_metadata(
+                entry,
+                "identity",
+                60000,
+                4,
+                max_rooms=1,
+            )
+            full = expected_run_metadata(entry, "identity", 60000, 4)
+            self.assertFalse(run_metadata_matches(partial, full))
+
+    def test_official_vote_metadata_tracks_protocol_parameters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.py"
+            checkpoint = root / "model_best.pth"
+            config.write_text("x = 1\n", encoding="utf-8")
+            checkpoint.write_bytes(b"checkpoint")
+            entry = dict(
+                family="baseline",
+                run_id="run",
+                seed=None,
+                checkpoint_kind="best",
+                config_path=str(config),
+                weight_path=str(checkpoint),
+            )
+            metadata = expected_run_metadata(
+                entry,
+                "official_vote10",
+                60000,
+                4,
+                vote_count=10,
+                vote_momentum=0.95,
+                augmentation_seed=7,
+            )
+            self.assertTrue(metadata["official_like"])
+            self.assertEqual(metadata["vote_count"], 10)
+            self.assertEqual(metadata["vote_momentum"], 0.95)
+            self.assertEqual(metadata["augmentation_seed"], 7)
 
     def test_two_server_compact_merge(self):
         with tempfile.TemporaryDirectory() as tmp:

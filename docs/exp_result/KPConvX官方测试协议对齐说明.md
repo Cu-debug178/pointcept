@@ -15,9 +15,31 @@ Apple Standalone KPConvX 的 S3DIS 测试并不是固定 `TTA13`。官方默认�
 
 此前缺少的是多视角几何增强和跨视角概率融合。
 
-## 2. 官方测试与当前测试的差异
+汇报时必须使用以下三个完整名称：
 
-| 项目 | 当前 identity 固定复评 | Apple Standalone S3DIS |
+| 编号 | 完整名称 | 权重 | 测试协议 | mIoU |
+| --- | --- | --- | --- | ---: |
+| A | 自训练 scale04 identity | 自训练 epoch 200 | Pointcept 单视角 fragment 概率回填 | **69.3926%** |
+| B | 官方权重 Standalone 10-vote | Apple epoch 300 | 整房间、10 次随机 vote、完整点云重投影 | **73.47%** |
+| C | 官方权重 Pointcept 4-rotation | 与 B 逐位相同的 Apple tensor | 4 个固定旋转、fragment 概率回填 | **68.07%** |
+
+A 是自训练模型；B/C 才是同一官方权重的双协议对照。A 没有使用 TTA13 或 official-like vote10，C 也只有 4 个固定旋转。
+
+A 的完整测试链路为：
+
+```text
+自训练 scale04 epoch 200
+-> Area5 68 rooms
+-> 0.04m GridSample(mode="test")
+-> <=60000 点 fragments
+-> identity 单视角
+-> fragment softmax 按 index 回填
+-> mIoU 69.3926%
+```
+
+## 2. 自训练单视角与官方 Standalone 的表面差异
+
+| 项目 | A：自训练 identity 固定复评 | B：Apple Standalone S3DIS |
 | --- | --- | --- |
 | 测试次数 | 1 次 | 10 votes |
 | 旋转 | identity | 每 vote 随机垂直旋转 |
@@ -32,6 +54,8 @@ Apple Standalone KPConvX 的 S3DIS 测试并不是固定 `TTA13`。官方默认�
 最后三项与训练输入分布和 Standalone 数据管线绑定，不能安全地在旧权重测试时
 直接替换。否则测到的是输入预处理失配，而不是 TTA/voting 收益。
 
+这张表只能说明 A 与 B 的整体差异，不能用来计算 TTA 的单独贡献，因为 A/B 不是同一权重、也不是同一模型配置。
+
 ## 3. 2026-07-16 官方权重双协议实测
 
 测试对象是同一份 Apple 官方 `S3DIS_KPConvX-L` epoch-300 权重。
@@ -43,7 +67,34 @@ Apple Standalone KPConvX 的 S3DIS 测试并不是固定 `TTA13`。官方默认�
 
 Standalone 的 `73.47%` 四舍五入后为 Apple 公布的 `73.5%`，官方结果已成功复现。Pointcept 比 Standalone 低 `5.40` 个百分点。
 
+两次测试的逐项流程为：
+
+| 对比环节 | B：Apple Standalone | C：Pointcept 对照 |
+| --- | --- | --- |
+| 权重 | 官方 `current_chkp.tar` | 同一组 864 tensors，仅键加 `backbone.` 前缀 |
+| 输入 | 5 维 `[1, RGB, 原始 z]` | 同样构造 5 维 `[1, RGB, 原始 z]` |
+| 初始点处理 | 0.04m initial subsampling | 0.04m `GridSample(mode="test")` partitions |
+| 房间组织 | `in_radius=100m`，完整房间 | 最多 60000 点 fragments |
+| 中心化 | XY 均值中心 + floor Z | bbox 中心 + floor Z，fragment 再 XY CenterShift |
+| 几何增强 | 随机垂直旋转、`0.99-1.01` 缩放、X 翻转 | 固定 `0/90/180/270` 度旋转 |
+| 视角数量 | 10 votes | 4 views |
+| 概率融合 | `momentum=0.95` 跨 vote 累计 | fragment softmax 按 index 累加 |
+| 完整点恢复 | nearest projection 回原始完整点云 | fragment 概率直接回填原始 index |
+
+这张 B/C 表才是合法的“同权重协议对照”。它证明全部推理流程合计造成 `5.40` 个百分点差异，但仍不能单独量化 10-vote 的贡献。
+
 这里的 Pointcept `68.07%` 只用于同一官方权重的协议对照。它不能与自训练 scale04 baseline 的 identity `69.3926%` 直接排序，因为模型配置、输入特征、训练预算和测试视角均不相同。
+
+| 模型配置 | A：自训练 scale04 | B/C：Apple 官方 KPConvX-L |
+| --- | --- | --- |
+| 输入维度 | 9 维 `coord + color + normal` | 5 维 `[1, RGB, z]` |
+| shell sizes | `(1, 14, 28)`，43 点 | `(1, 14, 42)`，57 点 |
+| influence | `constant` | `linear` |
+| `share_kp` | `False` | `True` |
+| neighbor limits | `(12,16,20,20,20)` | `(12,16,20,20,20)` |
+| 训练 | Pointcept batch 3，无梯度累积 | Standalone batch 4，梯度累积 6 |
+
+因此 `69.3926% > 68.07%` 不是有效的模型优劣结论，也不能由此推断 A 加 vote 后必然达到 `73.47%`。
 
 Pointcept checkpoint 只给 864 个参数键增加 `backbone.` 前缀并移除测试不需要的优化器状态，核验结果为：
 

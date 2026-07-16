@@ -27,5 +27,6 @@ from .concerto import *
 
 # KPConvX
 from .kpconvx import *
+from .kpconvx_soka import *
 from .kpnext import *
 from .kpconvx_hybrid import *

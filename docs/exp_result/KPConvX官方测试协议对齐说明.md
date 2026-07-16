@@ -32,7 +32,54 @@ Apple Standalone KPConvX 的 S3DIS 测试并不是固定 `TTA13`。官方默认�
 最后三项与训练输入分布和 Standalone 数据管线绑定，不能安全地在旧权重测试时
 直接替换。否则测到的是输入预处理失配，而不是 TTA/voting 收益。
 
-## 3. 本次新增协议
+## 3. 2026-07-16 官方权重双协议实测
+
+测试对象是同一份 Apple 官方 `S3DIS_KPConvX-L` epoch-300 权重。
+
+| 路线 | 测试协议 | mIoU | mAcc | allAcc |
+| --- | --- | ---: | ---: | ---: |
+| Apple Standalone | 官方整房间 10-vote | **73.47%** | **78.51%** | **91.74%** |
+| Pointcept | 0.04m、4 个固定 Z 轴旋转、fragment 聚合 | 68.07% | 72.99% | 89.91% |
+
+Standalone 的 `73.47%` 四舍五入后为 Apple 公布的 `73.5%`，官方结果已成功复现。Pointcept 比 Standalone 低 `5.40` 个百分点。
+
+这里的 Pointcept `68.07%` 只用于同一官方权重的协议对照。它不能与自训练 scale04 baseline 的 identity `69.3926%` 直接排序，因为模型配置、输入特征、训练预算和测试视角均不相同。
+
+Pointcept checkpoint 只给 864 个参数键增加 `backbone.` 前缀并移除测试不需要的优化器状态，核验结果为：
+
+```text
+source_tensors: 864
+converted_tensors: 864
+keys_match_after_prefix_removal: True
+all_tensor_values_bitwise_equal: True
+strict_load missing keys: 0
+strict_load unexpected keys: 0
+shape mismatches: 0
+```
+
+Pointcept 对照显式构造了官方 5 通道输入 `[1, R, G, B, z]`，因此差距不是权重损坏或输入通道顺序错误，而是两套推理/数据聚合流程不等价。官方 ZIP SHA-256 为 `9c89347f26327b1b4bad0f75a912d0cd6344209698147e23e64df447c7bc2487`，官方 checkpoint SHA-256 为 `1cdb6e0c028e6c57ce27665f6460b0e550568dadb46bc38c9565b4d9601a6849`，Pointcept 封装 checkpoint SHA-256 为 `dfc4a6d76d6f28340c7ed8473bf9dac4b62111c5346fdffda5210ebb9485a33e`。
+
+原始报告位于：
+
+```text
+D:/虚拟C盘/Edge下载/EVAL_RESULTS_20260716.md
+```
+
+报告记录的官方混淆矩阵、Pointcept 预测和转换后 checkpoint 当前仍在云端路径，本地 `exp/` 中尚未同步这些大文件。汇报可使用上述结果和 hash，但完整可复现归档仍需补下载。
+
+报告记录的云端证据路径：
+
+```text
+/root/autodl-tmp/ml-kpconvx/Standalone/KPConvX/results/S3DIS_KPConvX-L/test/test_001/report.txt
+/root/autodl-tmp/ml-kpconvx/Standalone/KPConvX/results/S3DIS_KPConvX-L/test/test_001/full_conf_009.txt
+/root/autodl-tmp/Pointcept-exp/s3dis/official-kpconvx-l-pointcept-area5/test.log
+/root/autodl-tmp/Pointcept-exp/s3dis/official-kpconvx-l-pointcept-area5/result/
+/root/autodl-tmp/Pointcept-exp/pretrained/kpconvx_official/pointcept/S3DIS_KPConvX-L.pth
+```
+
+云端报告使用的入口分别是 `./run_s3dis_kpconvx_l.sh` 和 `./scripts/test_s3dis_official_kpconvx_pointcept.sh`。这两个入口及其专用 Pointcept 配置当前没有出现在本地仓库，应在汇报后同步，避免只剩结果报告而缺少执行代码。
+
+## 4. 本次新增协议
 
 ### `tta13`
 
@@ -57,7 +104,7 @@ Apple Standalone KPConvX 的 S3DIS 测试并不是固定 `TTA13`。官方默认�
 使用 Pointcept 的 voxel partition、fragment 和 index 回写流程，不是 Standalone
 测试代码的逐行复现。
 
-## 4. 首轮测试对象
+## 5. 自训练基线的首轮测试对象
 
 只测试当前可信主基线：
 
@@ -70,7 +117,7 @@ identity mIoU: 0.693926
 先跑单房间 smoke，再跑 Area5 全量。TTA13 约为 identity 的 13 倍推理量，
 official_vote10 约为 10 倍；实际耗时还受数据准备和 fragment batch 影响。
 
-## 5. 结果解释
+## 6. 结果解释
 
 - identity、TTA13、official-like vote10 必须分别报告，不能混写成官方复现结果。
 - 如果两种增强都只提高很少，当前 `0.6939` 的主要差距不在测试投票。

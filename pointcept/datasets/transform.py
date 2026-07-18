@@ -871,6 +871,7 @@ class GridSample(object):
         return_min_coord=False,
         return_displacement=False,
         project_displacement=False,
+        deterministic=False,
     ):
         self.grid_size = grid_size
         self.hash = self.fnv_hash_vec if hash_type == "fnv" else self.ravel_hash_vec
@@ -881,6 +882,7 @@ class GridSample(object):
         self.return_min_coord = return_min_coord
         self.return_displacement = return_displacement
         self.project_displacement = project_displacement
+        self.deterministic = deterministic
 
     def __call__(self, data_dict):
         assert "coord" in data_dict.keys()
@@ -895,10 +897,14 @@ class GridSample(object):
         key_sort = key[idx_sort]
         _, inverse, count = np.unique(key_sort, return_inverse=True, return_counts=True)
         if self.mode == "train":  # train mode
-            idx_select = (
-                np.cumsum(np.insert(count, 0, 0)[0:-1])
-                + np.random.randint(0, count.max(), count.size) % count
-            )
+            group_start = np.cumsum(np.insert(count, 0, 0)[0:-1])
+            if self.deterministic:
+                idx_select = group_start
+            else:
+                idx_select = (
+                    group_start
+                    + np.random.randint(0, count.max(), count.size) % count
+                )
             idx_unique = idx_sort[idx_select]
             if "sampled_index" in data_dict:
                 # for ScanNet data efficient, we need to make sure labeled point is sampled.

@@ -10,6 +10,12 @@ BASELINE_CONFIG = (
     / "s3dis"
     / "semseg-kpconvx-base-s3dis-scale04-4090d-area5.py"
 )
+ALIGNED_BASELINE_CONFIG = (
+    ROOT
+    / "configs"
+    / "s3dis"
+    / "semseg-kpconvx-base-s3dis-scale04-136k-linear-sharekp-4090d-area5.py"
+)
 V17_CONFIG = (
     ROOT
     / "configs"
@@ -60,10 +66,11 @@ def _grid_size(config, split):
 class S3DISScale04ConfigTest(unittest.TestCase):
     def setUp(self):
         self.baseline = _load_config(BASELINE_CONFIG)
+        self.aligned_baseline = _load_config(ALIGNED_BASELINE_CONFIG)
         self.v17 = _load_config(V17_CONFIG)
 
     def test_physical_scale_is_consistent(self):
-        for config in (self.baseline, self.v17):
+        for config in (self.baseline, self.aligned_baseline, self.v17):
             backbone = config["model"]["backbone"]
             self.assertEqual(backbone["subsample_size"], 0.04)
             self.assertEqual(backbone["kp_radius"], 2.1)
@@ -94,6 +101,31 @@ class S3DISScale04ConfigTest(unittest.TestCase):
         self.assertEqual(self.baseline["data"]["train"]["loop"], 5)
         self.assertEqual(self.v17["data"]["train"]["loop"], 5)
 
+    def test_aligned_baseline_changes_only_budget_and_operator_factors(self):
+        baseline = self.baseline
+        aligned = self.aligned_baseline
+        baseline_backbone = dict(baseline["model"]["backbone"])
+        aligned_backbone = dict(aligned["model"]["backbone"])
+
+        self.assertEqual(aligned_backbone.pop("kp_influence"), "linear")
+        self.assertTrue(aligned_backbone.pop("share_kp"))
+        baseline_backbone.pop("kp_influence")
+        baseline_backbone.pop("share_kp")
+        self.assertEqual(aligned_backbone, baseline_backbone)
+
+        self.assertEqual(aligned["epoch"], 2000)
+        self.assertEqual(aligned["eval_epoch"], 400)
+        self.assertEqual(aligned["epoch"] // aligned["eval_epoch"], 5)
+        self.assertEqual(aligned["seed"], 57106803)
+        self.assertEqual(aligned["gradient_accumulation_steps"], 1)
+        self.assertEqual(aligned["model"]["criteria"], baseline["model"]["criteria"])
+        self.assertEqual(aligned["optimizer"], baseline["optimizer"])
+        self.assertEqual(aligned["data"]["train"], baseline["data"]["train"])
+        self.assertEqual(aligned["data"]["test"], baseline["data"]["test"])
+
+        self.assertEqual(aligned_backbone["input_channels"], 9)
+        self.assertEqual(aligned_backbone["inv_groups"], 8)
+
     def test_test_protocol_is_single_view_and_fragmented(self):
         for config in (self.baseline, self.v17):
             test_cfg = config["data"]["test"]["test_cfg"]
@@ -114,6 +146,31 @@ class S3DISScale04ConfigTest(unittest.TestCase):
         )
         self.assertEqual(baseline_saver["save_freq"], 20)
         self.assertEqual(v17_saver["save_freq"], 10)
+
+        aligned_saver = next(
+            hook
+            for hook in self.aligned_baseline["hooks"]
+            if hook["type"] == "CheckpointSaver"
+        )
+        self.assertEqual(
+            aligned_saver["weight_only_save_rules"],
+            [
+                dict(start=1, end=100, freq=20),
+                dict(start=101, end=140, freq=10),
+                dict(start=141, end=None, freq=5),
+            ],
+        )
+        self.assertEqual(aligned_saver["resume_save_freq"], 50)
+
+    def test_aligned_validation_is_fixed(self):
+        self.assertEqual(self.aligned_baseline["batch_size_val"], 1)
+        transforms = self.aligned_baseline["data"]["val"]["transform"]
+        grid = next(item for item in transforms if item["type"] == "GridSample")
+        crop = next(item for item in transforms if item["type"] == "SphereCrop")
+        self.assertTrue(grid["deterministic"])
+        self.assertEqual(grid["mode"], "train")
+        self.assertEqual(crop["mode"], "center")
+        self.assertEqual(crop["point_max"], 40000)
 
     def test_v17_only_enables_intended_experimental_paths(self):
         baseline = self.baseline["model"]["backbone"]

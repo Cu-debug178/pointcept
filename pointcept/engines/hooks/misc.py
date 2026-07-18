@@ -167,8 +167,26 @@ class InformationWriter(HookBase):
 
 @HOOKS.register_module()
 class CheckpointSaver(HookBase):
-    def __init__(self, save_freq=None):
+    def __init__(
+        self,
+        save_freq=None,
+        weight_only_save_rules=None,
+        resume_save_freq=None,
+    ):
         self.save_freq = save_freq  # None or int, None indicate only save model last
+        self.weight_only_save_rules = weight_only_save_rules or []
+        self.resume_save_freq = resume_save_freq
+
+    def _should_save_weights(self, epoch):
+        for rule in self.weight_only_save_rules:
+            start = int(rule.get("start", 1))
+            end = rule.get("end")
+            freq = int(rule["freq"])
+            if freq <= 0:
+                raise ValueError("Checkpoint weight-only save frequency must be positive")
+            if epoch >= start and (end is None or epoch <= int(end)):
+                return epoch % freq == 0
+        return False
 
     def after_epoch(self):
         if is_main_process():
@@ -194,35 +212,63 @@ class CheckpointSaver(HookBase):
                 self.trainer.cfg.save_path, "model", "model_last.pth"
             )
             self.trainer.logger.info("Saving checkpoint to: " + filename)
-            torch.save(
-                {
-                    "epoch": self.trainer.epoch + 1,
-                    "state_dict": self.trainer.model.state_dict(),
-                    "optimizer": self.trainer.optimizer.state_dict(),
-                    "scheduler": self.trainer.scheduler.state_dict(),
-                    "scaler": (
-                        self.trainer.scaler.state_dict()
-                        if self.trainer.cfg.enable_amp
-                        else None
-                    ),
-                    "best_metric_value": self.trainer.best_metric_value,
-                },
-                filename + ".tmp",
-            )
+            epoch = self.trainer.epoch + 1
+            checkpoint = {
+                "epoch": epoch,
+                "state_dict": self.trainer.model.state_dict(),
+                "optimizer": self.trainer.optimizer.state_dict(),
+                "scheduler": self.trainer.scheduler.state_dict(),
+                "scaler": (
+                    self.trainer.scaler.state_dict()
+                    if self.trainer.cfg.enable_amp
+                    else None
+                ),
+                "best_metric_value": self.trainer.best_metric_value,
+            }
+            torch.save(checkpoint, filename + ".tmp")
             os.replace(filename + ".tmp", filename)
             if is_best:
                 shutil.copyfile(
                     filename,
                     os.path.join(self.trainer.cfg.save_path, "model", "model_best.pth"),
                 )
-            if self.save_freq and (self.trainer.epoch + 1) % self.save_freq == 0:
+            if self.save_freq and epoch % self.save_freq == 0:
                 shutil.copyfile(
                     filename,
                     os.path.join(
                         self.trainer.cfg.save_path,
                         "model",
-                        f"epoch_{self.trainer.epoch + 1}.pth",
+                        f"epoch_{epoch}.pth",
                     ),
+                )
+            if self._should_save_weights(epoch):
+                weight_filename = os.path.join(
+                    self.trainer.cfg.save_path, "model", f"epoch_{epoch}.pth"
+                )
+                self.trainer.logger.info(
+                    "Saving weight-only checkpoint to: " + weight_filename
+                )
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "state_dict": checkpoint["state_dict"],
+                        "best_metric_value": self.trainer.best_metric_value,
+                    },
+                    weight_filename + ".tmp",
+                )
+                os.replace(weight_filename + ".tmp", weight_filename)
+            if self.resume_save_freq and epoch % self.resume_save_freq == 0:
+                resume_filename = os.path.join(
+                    self.trainer.cfg.save_path,
+                    "model",
+                    f"resume_epoch_{epoch}.pth",
+                )
+                self.trainer.logger.info(
+                    "Saving resumable checkpoint to: " + resume_filename
+                )
+                shutil.copyfile(
+                    filename,
+                    resume_filename,
                 )
 
 

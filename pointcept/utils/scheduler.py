@@ -153,6 +153,63 @@ class OneCycleLR(lr_scheduler.OneCycleLR):
         )
 
 
+@SCHEDULERS.register_module()
+class StandaloneS3DISLR(lr_scheduler.LambdaLR):
+    """KPConvX Standalone S3DIS schedule expressed in optimizer steps."""
+
+    def __init__(
+        self,
+        optimizer,
+        total_steps,
+        start_lr=1e-4,
+        peak_lr=5e-3,
+        reference_epochs=450,
+        warmup_epochs=30,
+        plateau_epochs=5,
+        decay10_epochs=120,
+        last_epoch=-1,
+    ):
+        total_steps = int(total_steps)
+        reference_epochs = float(reference_epochs)
+        warmup_epochs = float(warmup_epochs)
+        plateau_epochs = float(plateau_epochs)
+        decay10_epochs = float(decay10_epochs)
+        start_lr = float(start_lr)
+        peak_lr = float(peak_lr)
+
+        if total_steps < 1:
+            raise ValueError("total_steps must be positive")
+        if reference_epochs <= 0 or warmup_epochs <= 0:
+            raise ValueError("reference_epochs and warmup_epochs must be positive")
+        if plateau_epochs < 0 or decay10_epochs <= 0:
+            raise ValueError("plateau_epochs must be non-negative and decay10_epochs positive")
+        if start_lr <= 0 or peak_lr <= 0 or start_lr > peak_lr:
+            raise ValueError("learning rates must satisfy 0 < start_lr <= peak_lr")
+
+        start_factor = start_lr / peak_lr
+        plateau_end = warmup_epochs + plateau_epochs
+
+        def standalone_factor(step):
+            equivalent_epoch = (
+                min(max(float(step), 0.0), float(total_steps))
+                / float(total_steps)
+                * reference_epochs
+            )
+            if equivalent_epoch <= warmup_epochs:
+                progress = equivalent_epoch / warmup_epochs
+                return start_factor * (1.0 / start_factor) ** progress
+            if equivalent_epoch <= plateau_end:
+                return 1.0
+            decay_epochs = equivalent_epoch - plateau_end
+            return 10.0 ** (-decay_epochs / decay10_epochs)
+
+        super().__init__(
+            optimizer=optimizer,
+            lr_lambda=standalone_factor,
+            last_epoch=last_epoch,
+        )
+
+
 class CosineScheduler(object):
     def __init__(
         self,

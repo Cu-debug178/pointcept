@@ -5,11 +5,13 @@ import torch
 pytest.importorskip("torch_scatter")
 pytest.importorskip("torch_geometric")
 
-from pointcept.models.kpconvx.utils.kpnext_blocks import KPConvX
-from pointcept.models.kpconvx.kpconvx_base import KPConvXBase
-from pointcept.models.kpconvx_soka.kpconvx_soka import KPConvXSOKA
-from pointcept.models.kpconvx_soka.soka_blocks import SOKAKPConvX
 from pointcept.models.default import DefaultSegmentor
+from pointcept.models.kpconvx.kpconvx_base import KPConvXBase
+from pointcept.models.kpconvx.utils.kpnext_blocks import KPConvX
+from pointcept.models.kpconvx_soka.kpconvx_soka import KPConvXSOKA
+from pointcept.models.kpconvx_soka.kpconvx_soka_lite import KPConvXSOKALite
+from pointcept.models.kpconvx_soka.soka_blocks import SOKAKPConvX
+from pointcept.models.kpconvx_soka.soka_lite_blocks import SOKALiteKPConvX
 
 
 def _operator(shared_kp_data=None):
@@ -42,7 +44,8 @@ def _inputs(device="cpu"):
 def _upgrade(module, monitor=True):
     return SOKAKPConvX.from_kpconvx(
         module,
-        soka_hidden_dim=16,
+        soka_evidence_dim=8,
+        soka_rank=4,
         soka_bias_bound=2.0,
         soka_monitor=monitor,
     )
@@ -62,8 +65,12 @@ def test_zero_initialized_soka_matches_baseline():
     assert all(torch.isfinite(value) for value in soka._last_soka_diag.values())
 
 
-def test_neighbor_permutation_keeps_soka_output_unchanged():
+def test_neighbor_permutation_keeps_trained_soka_output_unchanged():
+    torch.manual_seed(4)
     soka = _upgrade(_operator()).eval()
+    with torch.no_grad():
+        soka.soka_correction_out.weight.normal_(std=0.05)
+        soka.soka_correction_out.bias.normal_(std=0.05)
     points, features, neighbors = _inputs()
     permutation = torch.tensor([2, 0, 3, 1])
     with torch.no_grad():
@@ -72,23 +79,37 @@ def test_neighbor_permutation_keeps_soka_output_unchanged():
     assert torch.allclose(output, permuted_output, atol=1e-6, rtol=0)
 
 
-def test_zero_last_layer_starts_learning_without_dead_beta():
+def test_negative_and_shadow_padding_are_equivalent():
+    soka = _upgrade(_operator()).eval()
+    points, features, shadow_neighbors = _inputs()
+    negative_neighbors = shadow_neighbors.clone()
+    negative_neighbors[negative_neighbors == points.shape[0]] = -1
+    with torch.no_grad():
+        shadow_output = soka(points, points, features, shadow_neighbors)
+        negative_output = soka(points, points, features, negative_neighbors)
+    assert torch.allclose(shadow_output, negative_output, atol=1e-6, rtol=0)
+
+
+def test_zero_last_layer_opens_all_evidence_gradients_after_one_update():
+    torch.manual_seed(5)
     soka = _upgrade(_operator()).train()
     points, features, neighbors = _inputs()
 
     first_loss = soka(points, points, features, neighbors).square().mean()
     first_loss.backward()
-    assert soka.soka_mlp[-1].weight.grad.abs().sum() > 0
+    assert soka.soka_correction_out.weight.grad.abs().sum() > 0
     assert soka.weights.grad.abs().sum() > 0
 
     with torch.no_grad():
-        soka.soka_mlp[-1].weight.add_(
-            -0.1 * soka.soka_mlp[-1].weight.grad
+        soka.soka_correction_out.weight.add_(
+            -0.1 * soka.soka_correction_out.weight.grad
         )
     soka.zero_grad(set_to_none=True)
     second_loss = soka(points, points, features, neighbors).square().mean()
     second_loss.backward()
-    assert soka.soka_mlp[0].weight.grad.abs().sum() > 0
+    assert soka.soka_neighbor_proj.weight.grad.abs().sum() > 0
+    assert soka.soka_geometry_encoder[0].weight.grad.abs().sum() > 0
+    assert soka.soka_query_encoder[0].weight.grad.abs().sum() > 0
 
 
 def test_shared_geometry_cache_matches_nonshared_operator():
@@ -101,6 +122,10 @@ def test_shared_geometry_cache_matches_nonshared_operator():
 
     with torch.no_grad():
         first(points, points, features, neighbors)
+        expected_signature = second._geometry_signature(
+            points, points, neighbors
+        )
+        assert shared["soka_geometry_signature"] == expected_signature
         cached_output = second(points, points, features, neighbors)
         standalone_output = standalone(points, points, features, neighbors)
         recomputed_output = second(points, points, features, neighbors.clone())
@@ -126,17 +151,34 @@ def test_backbone_replaces_only_selected_encoder_kpconvx_blocks():
         channel_scaling=1.0,
         first_inv_layer=1,
         decoder_layer=False,
-        soka_stages=(2, 3, 4, 5),
+        soka_stages=(4, 5),
         soka_monitor=False,
     )
-    assert not isinstance(model.encoder_1[0].conv, SOKAKPConvX)
-    for stage in (2, 3, 4, 5):
+    for stage in (1, 2, 3):
+        assert not isinstance(getattr(model, f"encoder_{stage}")[0].conv, SOKAKPConvX)
+    for stage in (4, 5):
         assert isinstance(getattr(model, f"encoder_{stage}")[0].conv, SOKAKPConvX)
     assert not any(
         isinstance(module, SOKAKPConvX)
         for name, module in model.named_modules()
         if name.startswith("decoder_layer_")
     )
+
+
+def test_lite_backbone_remains_separately_available():
+    model = KPConvXSOKALite(
+        input_channels=9,
+        num_classes=13,
+        layer_blocks=(1, 1, 1, 1, 1),
+        init_channels=16,
+        channel_scaling=1.0,
+        first_inv_layer=1,
+        decoder_layer=False,
+        soka_stages=(4,),
+        soka_monitor=False,
+    )
+    assert isinstance(model.encoder_4[0].conv, SOKALiteKPConvX)
+    assert not isinstance(model.encoder_4[0].conv, SOKAKPConvX)
 
 
 def test_backbone_preserves_all_baseline_state_keys():
@@ -153,7 +195,7 @@ def test_backbone_preserves_all_baseline_state_keys():
     soka = KPConvXSOKA(**kwargs, soka_monitor=False)
     baseline_keys = set(baseline.state_dict())
     soka_baseline_keys = {
-        key for key in soka.state_dict() if ".soka_mlp." not in key
+        key for key in soka.state_dict() if ".soka_" not in key
     }
     assert soka_baseline_keys == baseline_keys
 
@@ -194,4 +236,4 @@ def test_cuda_amp_forward_is_finite():
         loss = output.square().mean()
     loss.backward()
     assert torch.isfinite(output).all()
-    assert torch.isfinite(soka.soka_mlp[-1].weight.grad).all()
+    assert torch.isfinite(soka.soka_correction_out.weight.grad).all()

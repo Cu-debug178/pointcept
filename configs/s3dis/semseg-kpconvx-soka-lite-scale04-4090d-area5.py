@@ -4,7 +4,7 @@ _base_ = ["./semseg-kpconvx-base-s3dis-scale04-4090d-area5.py"]
 # training protocol are inherited unchanged from the plain scale04 baseline.
 model = dict(
     backbone=dict(
-        type="kpconvx_soka",
+        type="kpconvx_soka_lite",
         soka_enabled=True,
         soka_stages=(2, 3, 4, 5),
         soka_hidden_dim=16,

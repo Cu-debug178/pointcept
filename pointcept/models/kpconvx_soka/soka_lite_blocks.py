@@ -5,11 +5,7 @@ from torch import Tensor
 from pointcept.models.kpconvx.utils.generic_blocks import index_select
 from pointcept.models.kpconvx.utils.kpnext_blocks import KPConvX
 
-from .soka_geometry import (
-    build_kernel_cell_geometry,
-    kernel_cell_geometry_dim,
-    scatter_kernel_cell_mean,
-)
+from .soka_lite_geometry import build_soka_lite_descriptor
 
 
 def _attention_name(module: KPConvX):
@@ -24,74 +20,36 @@ def _attention_name(module: KPConvX):
     raise ValueError("Unsupported KPConvX attention activation")
 
 
-class SOKAKPConvX(KPConvX):
-    """KPConvX with zero-initialized kernel-cell geometry/feature fusion."""
+class SOKALiteKPConvX(KPConvX):
+    """Original SOKA-Lite scalar geometry bias for controlled ablations."""
 
     def __init__(
         self,
         *args,
         soka_enabled=True,
-        soka_evidence_dim=16,
-        soka_rank=8,
+        soka_hidden_dim=16,
         soka_bias_bound=2.0,
-        soka_use_geometry=True,
-        soka_use_topology=True,
-        soka_use_query=True,
         soka_monitor=False,
         soka_eps=1.0e-6,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        evidence_dim = int(soka_evidence_dim)
-        rank = int(soka_rank)
-        if evidence_dim < 1:
-            raise ValueError("soka_evidence_dim must be positive")
-        if rank < 1:
-            raise ValueError("soka_rank must be positive")
+        if int(soka_hidden_dim) < 1:
+            raise ValueError("soka_hidden_dim must be positive")
         if float(soka_bias_bound) < 0:
             raise ValueError("soka_bias_bound must be non-negative")
-        if not any((soka_use_geometry, soka_use_topology, soka_use_query)):
-            raise ValueError("at least one SOKA evidence branch must be enabled")
 
         self.soka_enabled = bool(soka_enabled)
-        self.soka_evidence_dim = evidence_dim
-        self.soka_rank = rank
         self.soka_bias_bound = float(soka_bias_bound)
-        self.soka_use_geometry = bool(soka_use_geometry)
-        self.soka_use_topology = bool(soka_use_topology)
-        self.soka_use_query = bool(soka_use_query)
         self.soka_monitor = bool(soka_monitor)
         self.soka_eps = float(soka_eps)
-
-        geometry_dim = kernel_cell_geometry_dim(self.dimension)
-        self.soka_geometry_encoder = nn.Sequential(
-            nn.Linear(geometry_dim, evidence_dim),
+        self.soka_mlp = nn.Sequential(
+            nn.Linear(6, int(soka_hidden_dim)),
             nn.SiLU(),
-            nn.Linear(evidence_dim, evidence_dim),
+            nn.Linear(int(soka_hidden_dim), 1),
         )
-        self.soka_neighbor_proj = nn.Linear(self.channels, evidence_dim, bias=False)
-        self.soka_center_proj = nn.Linear(self.channels, evidence_dim, bias=False)
-        self.soka_feature_mixer = nn.Sequential(
-            nn.Linear(2 * evidence_dim, evidence_dim),
-            nn.SiLU(),
-            nn.Linear(evidence_dim, evidence_dim),
-        )
-        self.soka_topology_encoder = nn.Sequential(
-            nn.Linear(evidence_dim, evidence_dim),
-            nn.SiLU(),
-        )
-        self.soka_query_encoder = nn.Sequential(
-            nn.Linear(self.channels, evidence_dim),
-            nn.SiLU(),
-            nn.Linear(evidence_dim, evidence_dim),
-        )
-        self.soka_fusion = nn.Sequential(
-            nn.Linear(3 * evidence_dim, rank),
-            nn.SiLU(),
-        )
-        self.soka_correction_out = nn.Linear(rank, self.ch_per_grp)
-        nn.init.zeros_(self.soka_correction_out.weight)
-        nn.init.zeros_(self.soka_correction_out.bias)
+        nn.init.zeros_(self.soka_mlp[-1].weight)
+        nn.init.zeros_(self.soka_mlp[-1].bias)
         self._last_soka_diag = {}
 
     @classmethod
@@ -99,12 +57,8 @@ class SOKAKPConvX(KPConvX):
         cls,
         module: KPConvX,
         *,
-        soka_evidence_dim=16,
-        soka_rank=8,
+        soka_hidden_dim=16,
         soka_bias_bound=2.0,
-        soka_use_geometry=True,
-        soka_use_topology=True,
-        soka_use_query=True,
         soka_monitor=False,
         soka_eps=1.0e-6,
     ):
@@ -122,16 +76,13 @@ class SOKAKPConvX(KPConvX):
             fixed_kernel_points=module.fixed_kernel_points,
             inf=module.inf,
             soka_enabled=True,
-            soka_evidence_dim=soka_evidence_dim,
-            soka_rank=soka_rank,
+            soka_hidden_dim=soka_hidden_dim,
             soka_bias_bound=soka_bias_bound,
-            soka_use_geometry=soka_use_geometry,
-            soka_use_topology=soka_use_topology,
-            soka_use_query=soka_use_query,
             soka_monitor=soka_monitor,
             soka_eps=soka_eps,
         )
 
+        # Preserve the exact baseline parameters, buffers, module behavior, and keys.
         upgraded.weights = module.weights
         upgraded.alpha_mlp = module.alpha_mlp
         upgraded.grpnorm = module.grpnorm
@@ -139,18 +90,12 @@ class SOKAKPConvX(KPConvX):
         upgraded.shared_kp_data = module.shared_kp_data
         upgraded.share_kp = module.share_kp
         upgraded.first_kp = module.first_kp
-        for name, child in upgraded.named_children():
-            if name.startswith("soka_"):
-                child.to(device=module.weights.device, dtype=module.weights.dtype)
+        upgraded.soka_mlp.to(
+            device=module.weights.device,
+            dtype=module.weights.dtype,
+        )
         upgraded.train(module.training)
         return upgraded
-
-    @staticmethod
-    def _normalize_neighbor_indices(neighb_inds: Tensor, support_size: int):
-        support_size = int(support_size)
-        valid_mask = (neighb_inds >= 0) & (neighb_inds < support_size)
-        shadow = torch.full_like(neighb_inds, int(support_size))
-        return torch.where(valid_mask, neighb_inds, shadow), valid_mask
 
     def _geometry_signature(self, q_pts: Tensor, s_pts: Tensor, neighb_inds: Tensor):
         return (
@@ -183,29 +128,25 @@ class SOKAKPConvX(KPConvX):
         s_pts: Tensor,
         neighb_inds: Tensor,
         return_geometry=False,
-        signature_neighb_inds=None,
     ):
-        if signature_neighb_inds is None:
-            signature_neighb_inds = neighb_inds
-        signature = self._geometry_signature(
-            q_pts, s_pts, signature_neighb_inds
-        )
+        signature = self._geometry_signature(q_pts, s_pts, neighb_inds)
         cache_matches = (
             self.share_kp
             and self.shared_kp_data.get("soka_geometry_signature") == signature
         )
+
         force_recompute = self.share_kp and not self.first_kp and not cache_matches
         if force_recompute:
             original_first_kp = self.first_kp
             self.first_kp = True
             try:
-                influence_weights, neighbors, cell_ids = (
+                influence_weights, neighbors, neighbors_1nn = (
                     super().get_neighbors_influences(q_pts, s_pts, neighb_inds)
                 )
             finally:
                 self.first_kp = original_first_kp
         else:
-            influence_weights, neighbors, cell_ids = (
+            influence_weights, neighbors, neighbors_1nn = (
                 super().get_neighbors_influences(q_pts, s_pts, neighb_inds)
             )
 
@@ -219,9 +160,9 @@ class SOKAKPConvX(KPConvX):
             nn_sq_dists = self.shared_kp_data["soka_nn_sq_dists"]
             valid_mask = self.shared_kp_data["soka_valid_mask"]
         else:
-            valid_mask = (neighb_inds >= 0) & (neighb_inds < s_pts.shape[0])
+            valid_mask = neighb_inds < s_pts.shape[0]
             assigned_kernels = self.kernel_points.index_select(
-                0, cell_ids.reshape(-1)
+                0, neighbors_1nn.reshape(-1)
             ).reshape(*neighbors.shape)
             safe_neighbors = torch.where(
                 valid_mask.unsqueeze(-1), neighbors, assigned_kernels
@@ -237,11 +178,11 @@ class SOKAKPConvX(KPConvX):
             return (
                 influence_weights,
                 neighbors,
-                cell_ids,
+                neighbors_1nn,
                 nn_sq_dists,
                 valid_mask,
             )
-        return influence_weights, neighbors, cell_ids
+        return influence_weights, neighbors, neighbors_1nn
 
     @staticmethod
     def _mean_std(values: Tensor, mask=None):
@@ -256,39 +197,38 @@ class SOKAKPConvX(KPConvX):
     @torch.no_grad()
     def _record_soka_diag(
         self,
+        descriptor,
         auxiliary,
-        geometry_evidence,
-        topology_evidence,
-        correction,
+        soka_bias,
         base_logits,
         attention,
     ):
-        counts = auxiliary["counts"]
         occupied = auxiliary["occupied_mask"]
-        valid_count_mean, valid_count_std = self._mean_std(auxiliary["valid_counts"])
-        occupied_cells_mean, occupied_cells_std = self._mean_std(
-            occupied.sum(dim=1).float()
+        occ_mean, occ_std = self._mean_std(descriptor[..., 0])
+        entropy_mean, entropy_std = self._mean_std(auxiliary["entropy"])
+        radial_mean, radial_std = self._mean_std(descriptor[..., 1], occupied)
+        assignment_mean, assignment_std = self._mean_std(
+            descriptor[..., 2], occupied
         )
-        correction_rms = correction.float().square().mean().sqrt()
+        bias_mean, bias_std = self._mean_std(soka_bias)
+        bias_rms = soka_bias.float().square().mean().sqrt()
         base_rms = base_logits.float().square().mean().sqrt()
-        singleton_ratio = (counts == 1).sum().float() / occupied.sum().clamp_min(1)
         self._last_soka_diag = {
-            "valid_count_mean": valid_count_mean.detach(),
-            "valid_count_std": valid_count_std.detach(),
-            "occupied_cells_mean": occupied_cells_mean.detach(),
-            "occupied_cells_std": occupied_cells_std.detach(),
-            "occupied_ratio": occupied.float().mean().detach(),
-            "singleton_ratio": singleton_ratio.detach(),
-            "geometry_rms": geometry_evidence.float().square().mean().sqrt().detach(),
-            "topology_rms": topology_evidence.float().square().mean().sqrt().detach(),
-            "correction_abs": correction.detach().abs().mean(),
-            "correction_rms": correction_rms.detach(),
-            "correction_group_std": correction.detach().std(
-                dim=-1, unbiased=False
-            ).mean(),
+            "occ_mean": occ_mean.detach(),
+            "occ_std": occ_std.detach(),
+            "entropy_mean": entropy_mean.detach(),
+            "entropy_std": entropy_std.detach(),
+            "radial_mean": radial_mean.detach(),
+            "radial_std": radial_std.detach(),
+            "assignment_mean": assignment_mean.detach(),
+            "assignment_std": assignment_std.detach(),
+            "bias_mean": bias_mean.detach(),
+            "bias_std": bias_std.detach(),
+            "bias_abs": soka_bias.detach().abs().mean(),
+            "base_logit_abs": base_logits.detach().abs().mean(),
             "base_logit_rms": base_rms.detach(),
             "soka_to_base_ratio": (
-                correction_rms / (base_rms + self.soka_eps)
+                bias_rms / (base_rms + self.soka_eps)
             ).detach(),
             "attention_low_ratio": (attention.detach() < 0.05).float().mean(),
             "attention_high_ratio": (attention.detach() > 0.95).float().mean(),
@@ -304,13 +244,11 @@ class SOKAKPConvX(KPConvX):
         if not self.soka_enabled:
             return super().forward(q_pts, s_pts, s_feats, neighb_inds)
 
-        safe_neighb_inds, _ = self._normalize_neighbor_indices(
-            neighb_inds, s_pts.shape[0]
-        )
         padded_s_feats = torch.cat(
             (s_feats, torch.zeros_like(s_feats[:1, :])), dim=0
         )
-        neighbor_feats = index_select(padded_s_feats, safe_neighb_inds, dim=0)
+        neighbor_feats = index_select(padded_s_feats, neighb_inds, dim=0)
+
         if q_pts.shape[0] == s_pts.shape[0]:
             pooled_feats = s_feats
         else:
@@ -319,24 +257,24 @@ class SOKAKPConvX(KPConvX):
         (
             influence_weights,
             relative_neighbors,
-            cell_ids,
+            neighbors_1nn,
             nn_sq_dists,
             valid_mask,
         ) = self.get_neighbors_influences(
             q_pts,
             s_pts,
-            safe_neighb_inds,
+            neighb_inds,
             return_geometry=True,
-            signature_neighb_inds=neighb_inds,
         )
-        geometry_descriptor, auxiliary = build_kernel_cell_geometry(
+        descriptor, auxiliary = build_soka_lite_descriptor(
             relative_neighbors,
-            cell_ids,
+            neighbors_1nn,
             nn_sq_dists,
             valid_mask,
             self.kernel_points,
             self.radius,
             self.sigma,
+            eps=self.soka_eps,
         )
 
         modulations = self.alpha_mlp(pooled_feats)
@@ -344,51 +282,12 @@ class SOKAKPConvX(KPConvX):
             modulations = modulations.transpose(0, 1).unsqueeze(0)
             modulations = self.grpnorm(modulations)
             modulations = modulations.squeeze(0).transpose(0, 1)
+
         base_logits = modulations.reshape(-1, self.K, self.ch_per_grp)
-
-        zero_evidence = base_logits.new_zeros(
-            base_logits.shape[0], self.K, self.soka_evidence_dim
+        soka_bias = self.soka_bias_bound * torch.tanh(
+            self.soka_mlp(descriptor.to(dtype=base_logits.dtype))
         )
-        if self.soka_use_geometry:
-            geometry_evidence = self.soka_geometry_encoder(
-                geometry_descriptor.to(dtype=base_logits.dtype)
-            )
-        else:
-            geometry_evidence = zero_evidence
-
-        if self.soka_use_topology:
-            neighbor_encoded = self.soka_neighbor_proj(neighbor_feats)
-            center_encoded = self.soka_center_proj(pooled_feats).unsqueeze(1)
-            neighbor_evidence = self.soka_feature_mixer(
-                torch.cat(
-                    (neighbor_encoded - center_encoded, neighbor_encoded), dim=-1
-                )
-            )
-            cell_topology, _ = scatter_kernel_cell_mean(
-                neighbor_evidence,
-                cell_ids,
-                valid_mask,
-                self.K,
-            )
-            topology_evidence = self.soka_topology_encoder(cell_topology)
-        else:
-            topology_evidence = zero_evidence
-
-        if self.soka_use_query:
-            query_evidence = self.soka_query_encoder(pooled_feats)
-            query_evidence = query_evidence.unsqueeze(1).expand(-1, self.K, -1)
-        else:
-            query_evidence = zero_evidence
-
-        fused = torch.cat(
-            (geometry_evidence, topology_evidence, query_evidence), dim=-1
-        )
-        correction = self.soka_correction_out(self.soka_fusion(fused))
-        correction = self.soka_bias_bound * torch.tanh(correction)
-        correction = correction * auxiliary["occupied_mask"].unsqueeze(-1).to(
-            dtype=correction.dtype
-        )
-        attention_logits = (base_logits + correction).reshape(
+        attention_logits = (base_logits + soka_bias).reshape(
             -1, self.K * self.ch_per_grp
         )
         attention = self.attention_act(attention_logits).reshape(
@@ -403,7 +302,7 @@ class SOKAKPConvX(KPConvX):
         neighbors_weights = torch.gather(
             conv_weights,
             1,
-            cell_ids.unsqueeze(2).expand(-1, -1, self.channels),
+            neighbors_1nn.unsqueeze(2).expand(-1, -1, self.channels),
         )
         if self.influence_mode != "constant":
             neighbors_weights = neighbors_weights * influence_weights.unsqueeze(2)
@@ -413,10 +312,9 @@ class SOKAKPConvX(KPConvX):
         )
         if self.soka_monitor:
             self._record_soka_diag(
+                descriptor,
                 auxiliary,
-                geometry_evidence,
-                topology_evidence,
-                correction,
+                soka_bias,
                 base_logits,
                 attention,
             )

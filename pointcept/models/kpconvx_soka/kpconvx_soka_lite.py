@@ -4,36 +4,28 @@ from pointcept.models.builder import MODELS
 from pointcept.models.kpconvx.kpconvx_base import KPConvXBase
 from pointcept.models.kpconvx.utils.kpnext_blocks import KPConvX
 
-from .soka_blocks import SOKAKPConvX
+from .soka_lite_blocks import SOKALiteKPConvX
 
 
-@MODELS.register_module("kpconvx_soka")
-class KPConvXSOKA(KPConvXBase):
-    """KPConvX with kernel-cell geometric/topological attention fusion."""
+@MODELS.register_module("kpconvx_soka_lite")
+class KPConvXSOKALite(KPConvXBase):
+    """Plain KPConvX with SOKA-Lite in selected encoder attention stages."""
 
     def __init__(
         self,
         *args,
         soka_enabled=True,
-        soka_stages=(4, 5),
-        soka_evidence_dim=16,
-        soka_rank=8,
+        soka_stages=(2, 3, 4, 5),
+        soka_hidden_dim=16,
         soka_bias_bound=2.0,
-        soka_use_geometry=True,
-        soka_use_topology=True,
-        soka_use_query=True,
         soka_monitor=True,
         soka_eps=1.0e-6,
         **kwargs,
     ):
         self.soka_enabled = bool(soka_enabled)
         self.soka_stages = tuple(dict.fromkeys(int(stage) for stage in soka_stages))
-        self.soka_evidence_dim = int(soka_evidence_dim)
-        self.soka_rank = int(soka_rank)
+        self.soka_hidden_dim = int(soka_hidden_dim)
         self.soka_bias_bound = float(soka_bias_bound)
-        self.soka_use_geometry = bool(soka_use_geometry)
-        self.soka_use_topology = bool(soka_use_topology)
-        self.soka_use_query = bool(soka_use_query)
         self.soka_monitor = bool(soka_monitor)
         self.soka_eps = float(soka_eps)
         super().__init__(*args, **kwargs)
@@ -53,15 +45,11 @@ class KPConvXSOKA(KPConvXBase):
                 conv = getattr(block, "conv", None)
                 if not isinstance(conv, KPConvX):
                     continue
-                if not isinstance(conv, SOKAKPConvX):
-                    conv = SOKAKPConvX.from_kpconvx(
+                if not isinstance(conv, SOKALiteKPConvX):
+                    conv = SOKALiteKPConvX.from_kpconvx(
                         conv,
-                        soka_evidence_dim=self.soka_evidence_dim,
-                        soka_rank=self.soka_rank,
+                        soka_hidden_dim=self.soka_hidden_dim,
                         soka_bias_bound=self.soka_bias_bound,
-                        soka_use_geometry=self.soka_use_geometry,
-                        soka_use_topology=self.soka_use_topology,
-                        soka_use_query=self.soka_use_query,
                         soka_monitor=self.soka_monitor,
                         soka_eps=self.soka_eps,
                     )

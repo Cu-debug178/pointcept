@@ -16,6 +16,12 @@ ALIGNED_BASELINE_CONFIG = (
     / "s3dis"
     / "semseg-kpconvx-base-s3dis-scale04-136k-linear-sharekp-4090d-area5.py"
 )
+STANDALONE_TRAIN_CONFIG = (
+    ROOT
+    / "configs"
+    / "s3dis"
+    / "semseg-kpconvx-base-s3dis-standalone-train-aligned-136k-4090d-area5.py"
+)
 V17_CONFIG = (
     ROOT
     / "configs"
@@ -67,10 +73,16 @@ class S3DISScale04ConfigTest(unittest.TestCase):
     def setUp(self):
         self.baseline = _load_config(BASELINE_CONFIG)
         self.aligned_baseline = _load_config(ALIGNED_BASELINE_CONFIG)
+        self.standalone_train = _load_config(STANDALONE_TRAIN_CONFIG)
         self.v17 = _load_config(V17_CONFIG)
 
     def test_physical_scale_is_consistent(self):
-        for config in (self.baseline, self.aligned_baseline, self.v17):
+        for config in (
+            self.baseline,
+            self.aligned_baseline,
+            self.standalone_train,
+            self.v17,
+        ):
             backbone = config["model"]["backbone"]
             self.assertEqual(backbone["subsample_size"], 0.04)
             self.assertEqual(backbone["kp_radius"], 2.1)
@@ -171,6 +183,60 @@ class S3DISScale04ConfigTest(unittest.TestCase):
         self.assertEqual(grid["mode"], "train")
         self.assertEqual(crop["mode"], "center")
         self.assertEqual(crop["point_max"], 40000)
+
+    def test_standalone_training_factors_are_explicitly_aligned(self):
+        config = self.standalone_train
+        backbone = config["model"]["backbone"]
+        self.assertEqual(config["epoch"], 2000)
+        self.assertEqual(config["eval_epoch"], 400)
+        self.assertEqual(backbone["kp_influence"], "linear")
+        self.assertTrue(backbone["share_kp"])
+        self.assertEqual(backbone["inv_groups"], 4)
+        self.assertEqual(backbone["channel_scaling"], 1.41)
+        self.assertEqual(backbone["input_channels"], 9)
+        self.assertEqual(config["mix_prob"], 0)
+        self.assertEqual(
+            config["model"]["criteria"],
+            [
+                dict(
+                    type="CrossEntropyLoss",
+                    loss_weight=1.0,
+                    ignore_index=-1,
+                )
+            ],
+        )
+        self.assertEqual(config["optimizer"]["type"], "AdamW")
+        self.assertEqual(config["optimizer"]["lr"], 5.0e-3)
+        self.assertEqual(config["optimizer"]["weight_decay"], 0.05)
+        self.assertEqual(config["scheduler"]["type"], "StandaloneS3DISLR")
+        self.assertNotIn("max_lr", config["scheduler"])
+        self.assertNotIn("pct_start", config["scheduler"])
+        self.assertNotIn("div_factor", config["scheduler"])
+        self.assertEqual(config["scheduler"]["start_lr"], 1.0e-4)
+        self.assertEqual(config["scheduler"]["warmup_epochs"], 30)
+        self.assertEqual(config["scheduler"]["plateau_epochs"], 5)
+        self.assertEqual(config["scheduler"]["decay10_epochs"], 120)
+
+    def test_standalone_training_config_keeps_pointcept_data_protocol(self):
+        self.assertEqual(
+            self.standalone_train["data"], self.aligned_baseline["data"]
+        )
+        train_types = [
+            transform["type"]
+            for transform in self.standalone_train["data"]["train"]["transform"]
+        ]
+        for transform_type in (
+            "RandomDropout",
+            "RandomRotateTargetAngle",
+            "RandomScale",
+            "RandomFlip",
+            "RandomJitter",
+            "ElasticDistortion",
+            "ChromaticAutoContrast",
+            "ChromaticTranslation",
+            "ChromaticJitter",
+        ):
+            self.assertIn(transform_type, train_types)
 
     def test_v17_only_enables_intended_experimental_paths(self):
         baseline = self.baseline["model"]["backbone"]

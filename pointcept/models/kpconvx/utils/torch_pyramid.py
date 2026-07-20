@@ -48,15 +48,29 @@ def adaptive_radius_search_pack_mode(
 ):
     offset = torch.cumsum(s_lengths, dim=0).int()
     q_offset = torch.cumsum(q_lengths, dim=0).int()
-    neighbors, distances = pointops.adaptive_ball_query(
-        neighbor_limit,
-        min_radius,
-        radius.reshape(-1).contiguous(),
-        s_points.contiguous(),
-        offset,
-        q_points.contiguous(),
-        q_offset,
-    )
+    radius = radius.reshape(-1).contiguous()
+    if callable(getattr(pointops, "adaptive_ball_query_idx", None)):
+        neighbors = pointops.adaptive_ball_query_idx(
+            neighbor_limit,
+            min_radius,
+            radius,
+            s_points.contiguous(),
+            offset,
+            q_points.contiguous(),
+            q_offset,
+        )
+        distances = None
+    else:
+        # Compatibility with an older in-place extension build.
+        neighbors, distances = pointops.adaptive_ball_query(
+            neighbor_limit,
+            min_radius,
+            radius,
+            s_points.contiguous(),
+            offset,
+            q_points.contiguous(),
+            q_offset,
+        )
     return neighbors.long(), distances
 
 
@@ -298,6 +312,58 @@ def build_full_pyramid(points: Tensor,
                  da_radius_scales,
                  da_radius_backend)
 
+    return pyramid
+
+
+@torch.no_grad()
+def replace_pyramid_da_neighbors(
+    pyramid: EasyDict,
+    search_radius: float,
+    radius_scaling: float,
+    neighbor_limits: List[int],
+    da_radius_scales: List[Tensor],
+    da_radius_backend: str = "cuda",
+):
+    """Replace selected neighbor lists while reusing the built pyramid.
+
+    The points, lengths, pooling indices, and upsampling indices are copied
+    from the already-built base pyramid. Only the selected adaptive neighbor
+    lists are rebuilt, preserving the old radius-scale estimator and its
+    first-hit plus shadow-padding contract.
+    """
+    if da_radius_backend != "cuda":
+        raise ValueError("replace_pyramid_da_neighbors currently requires the CUDA backend")
+    if len(pyramid.points) != len(pyramid.lengths):
+        raise ValueError("pyramid points and lengths must have matching layers")
+    if len(pyramid.neighbors) != len(pyramid.points):
+        raise ValueError("pyramid must contain one neighbor list per layer")
+    if len(da_radius_scales) != len(pyramid.points):
+        raise ValueError("da_radius_scales must contain one entry per layer")
+    if len(neighbor_limits) < len(pyramid.points):
+        raise ValueError("neighbor_limits must cover every pyramid layer")
+
+    replaced = list(pyramid.neighbors)
+    layer_radius = search_radius
+    for i, (cur_points, cur_lengths, radius_scale) in enumerate(
+        zip(pyramid.points, pyramid.lengths, da_radius_scales)
+    ):
+        if radius_scale is not None:
+            radius_i = layer_radius * radius_scale.to(
+                device=cur_points.device, dtype=cur_points.dtype
+            )
+            reference_index, _ = adaptive_radius_search_pack_mode(
+                cur_points,
+                cur_points,
+                cur_lengths,
+                cur_lengths,
+                radius_i,
+                neighbor_limits[i],
+            )
+            reference_index[reference_index < 0] = cur_points.shape[0]
+            replaced[i] = reference_index
+        layer_radius *= radius_scaling
+
+    pyramid.neighbors = replaced
     return pyramid
 
 

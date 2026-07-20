@@ -3,10 +3,14 @@ _base_ = ["./semseg-kpconvx-hybrid-v12-cuda-vs-torch-radius-check-area5.py"]
 # Clean CUDA DA-Radius ablation for cloud training.
 # Compared with v12, this changes the neighbor graph with CUDA adaptive radius
 # instead of only masking the fixed KNN graph inside KPConvX blocks.
+# Rebuild libs/pointops before training. da_radius_backend="cuda" automatically
+# selects the indices-only CUDA query and reuses the first pyramid structure;
+# no additional model option is required for the optimized path.
 model = dict(
     backbone=dict(
         enable_da=False,
         enable_global=False,
+        use_da_radius=True,
         da_radius_backend="cuda",
         da_radius_stages=(3, 4),
         da_radius_scale_range=(0.95, 1.25),

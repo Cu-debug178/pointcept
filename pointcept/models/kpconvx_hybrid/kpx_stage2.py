@@ -3,7 +3,10 @@ import os
 import torch
 
 from pointcept.models.builder import MODELS
-from pointcept.models.kpconvx.utils.torch_pyramid import build_full_pyramid
+from pointcept.models.kpconvx.utils.torch_pyramid import (
+    build_full_pyramid,
+    replace_pyramid_da_neighbors,
+)
 from pointcept.utils.logger import get_root_logger
 
 from .kpx_stage1 import KPConvXStage1
@@ -452,17 +455,13 @@ class KPConvXStage2(KPConvXStage1):
             else:
                 radius_scales.append(None)
 
-        cuda_in_dict = build_full_pyramid(
-            points,
-            lengths,
-            self.num_layers,
-            self.subsample_size,
-            self.first_radius,
-            self.radius_scaling,
-            self.neighbor_limits,
-            self.upsample_n,
-            sub_mode=self.in_sub_mode,
-            grid_pool_mode=self.grid_pool,
+        # Reuse points, pooling, and upsampling from the first pyramid. Only
+        # selected DA stages need a second neighbor search.
+        cuda_in_dict = replace_pyramid_da_neighbors(
+            in_dict,
+            search_radius=self.first_radius,
+            radius_scaling=self.radius_scaling,
+            neighbor_limits=self.neighbor_limits,
             da_radius_scales=radius_scales,
             da_radius_backend="cuda",
         )

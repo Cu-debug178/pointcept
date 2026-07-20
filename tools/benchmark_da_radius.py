@@ -164,8 +164,8 @@ def main():
 
     import pointops
 
-    if not hasattr(pointops, "adaptive_ball_query"):
-        raise RuntimeError("pointops.adaptive_ball_query is unavailable")
+    if not callable(getattr(pointops, "adaptive_ball_query_idx", None)):
+        raise RuntimeError("rebuild pointops for adaptive_ball_query_idx")
 
     points, offset = make_points(args.num_points, args.batches, device)
     radius_scale = density_radius_scale(
@@ -178,7 +178,18 @@ def main():
     radius = args.radius * radius_scale
 
     timer = time_cuda if device.type == "cuda" else time_cpu
-    adaptive_ms, adaptive_peak_mb, (idx, dist) = timer(
+    adaptive_idx_ms, adaptive_idx_peak_mb, idx = timer(
+        lambda: pointops.adaptive_ball_query_idx(
+            args.nsample,
+            0.0,
+            radius,
+            points,
+            offset,
+        ),
+        args.warmup,
+        args.repeat,
+    )
+    adaptive_legacy_ms, adaptive_legacy_peak_mb, (legacy_idx, dist) = timer(
         lambda: pointops.adaptive_ball_query(
             args.nsample,
             0.0,
@@ -189,6 +200,9 @@ def main():
         args.warmup,
         args.repeat,
     )
+    if not torch.equal(idx, legacy_idx):
+        mismatch = (idx != legacy_idx).sum().item()
+        raise AssertionError(f"indices-only output differs at {mismatch} entries")
     outside_count = ((dist > radius.view(-1, 1) + 1e-4) & (idx >= 0)).sum().item()
     adaptive_unique_count = unique_neighbor_count(idx)
     adaptive_shadow_ratio = shadow_ratio(idx)
@@ -221,8 +235,11 @@ def main():
     print(f"  radius_scale_mean={radius_scale.mean().item():.4f}")
     print(f"  radius_scale_max={radius_scale.max().item():.4f}")
     print(f"  radius_mean={radius.mean().item():.4f}")
-    print(f"  adaptive_ball_query_ms={adaptive_ms:.3f}")
-    print(f"  adaptive_peak_mb={adaptive_peak_mb:.2f}")
+    print(f"  adaptive_ball_query_idx_ms={adaptive_idx_ms:.3f}")
+    print(f"  adaptive_idx_peak_mb={adaptive_idx_peak_mb:.2f}")
+    print(f"  adaptive_ball_query_legacy_ms={adaptive_legacy_ms:.3f}")
+    print(f"  adaptive_legacy_peak_mb={adaptive_legacy_peak_mb:.2f}")
+    print("  adaptive_indices_equal_legacy=True")
     print(f"  adaptive_unique_neighbors_min={adaptive_unique_count.min().item():.2f}")
     print(f"  adaptive_unique_neighbors_mean={adaptive_unique_count.mean().item():.2f}")
     print(f"  adaptive_unique_neighbors_max={adaptive_unique_count.max().item():.2f}")

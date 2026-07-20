@@ -1,5 +1,80 @@
 # DA-Radius Local-Global KPConvX 收尾报告
 
+## 2026-07-20 CUDA 扩展优化
+
+根据 `GPT-5.5Pro/cuda-extension-speed-review` 中保存的 GPT-5.6 Pro 建议及批判性裁决，已完成语义保持的第一、二阶段优化：
+
+- 新增 `adaptive_ball_query_idx`，训练路径不再分配/写回 `dist2`，也不再启动 Python `sqrt` kernel；旧距离接口继续保留。
+- adaptive kernel 找满 `nsample` 后提前退出，并删除无输出用途的 nearest-neighbor 临时变量。
+- launcher 显式使用 PyTorch current CUDA stream，并在 launch 后调用 `C10_CUDA_KERNEL_LAUNCH_CHECK()`。
+- kernel 使用真实 batch 数作为 `new_offset` 扫描上界；C++ binding 增加 device、dtype、shape、contiguous 和同设备校验。
+- 保持既有 first-hit 截断与 `-1` shadow padding 语义，没有改成 nearest-K 或 fallback 重复邻居。
+- DA-Radius 不再第二次完整执行 `build_full_pyramid()`；复用第一次生成的 points、lengths、pool、upsample 和非 DA stage neighbors，只替换选中的 DA stage neighbor lists。
+
+本机环境：Python 3.14、PyTorch 2.9.1+cu128、CUDA Toolkit 12.8 编译链、GTX 1650。扩展已完整编译并通过：
+
+```text
+python tools/check_da_radius.py --device cuda
+indices_only_equal_legacy=True
+outside_count=0
+adaptive_ball_query_idx_ms=0.343
+adaptive_ball_query_legacy_ms=0.460
+
+python tools/benchmark_da_radius.py --num-points 1024 --batches 2 \
+  --nsample 16 --radius 0.2 --warmup 10 --repeat 50 --device cuda
+adaptive_ball_query_idx_ms=0.163
+adaptive_ball_query_legacy_ms=0.384
+adaptive_indices_equal_legacy=True
+adaptive_shadow_ratio=0.1399
+adaptive_outside_count=0
+
+python -m pytest tests -q
+60 passed, 2 skipped, 11 subtests passed
+```
+
+额外检查已覆盖空 query、双 batch 隔离、非默认 CUDA stream、错误 dtype 拒绝，以及 pyramid 结构对象复用。以上时延只代表本机小规模 sanity，不外推为 4090D 或真实 S3DIS batch 的收益。
+
+仍保留的主要限制是 adaptive query 的 batch 内 direct scan 复杂度。candidate reuse、voxel/hash 搜索和手工 buffer 缓存没有实施，因为现有证据不足以证明它们能保持邻居语义或提供端到端收益；应先在真实训练环境测量各 stage 时间与点数。
+
+### 当前 CUDA 路径使用方法
+
+拉取代码或修改 CUDA 源后必须重新编译本地扩展：
+
+```bash
+cd libs/pointops
+python setup.py build_ext --inplace
+cd ../..
+
+python -c "import sys; sys.path.insert(0, 'libs'); import pointops; assert callable(pointops.adaptive_ball_query_idx); print('optimized pointops CUDA ready')"
+python tools/check_da_radius.py --device cuda
+```
+
+模型配置只需要启用 DA-Radius 并选择 CUDA backend：
+
+```python
+model = dict(
+    backbone=dict(
+        use_da_radius=True,
+        da_radius_backend="cuda",
+        da_radius_apply_block_mask=False,
+    )
+)
+```
+
+`da_radius_backend="cuda"` 会自动调用 `adaptive_ball_query_idx`，并在 `KPConvXStage2._build_pyramid()` 中复用第一次 pyramid 的结构，不需要增加新的配置开关。旧的 `adaptive_ball_query` 距离接口仅用于兼容和 correctness 对照。
+
+当前干净的 CUDA DA-Radius 训练配置与命令：
+
+```bash
+python tools/train.py --config-file configs/s3dis/semseg-kpconvx-hybrid-v13-da-radius-cuda-only-area5.py
+```
+
+Torch reference 仍使用 v12 配置，只用于语义检查，不作为速度训练路径：
+
+```bash
+python tools/train.py --config-file configs/s3dis/semseg-kpconvx-hybrid-v12-cuda-vs-torch-radius-check-area5.py
+```
+
 ## 1. 当前完成状态
 
 本轮继续完成的是 Stage 7/8/9 的收尾验证与可运行性修复。此前已经完成的核心内容包括：

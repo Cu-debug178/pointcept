@@ -88,8 +88,8 @@ def check_cuda_query():
         print(f"cuda_query: skipped, import pointops failed: {exc}")
         return
 
-    if not hasattr(pointops, "adaptive_ball_query"):
-        print("cuda_query: skipped, pointops.adaptive_ball_query is unavailable")
+    if not callable(getattr(pointops, "adaptive_ball_query_idx", None)):
+        print("cuda_query: skipped, rebuild pointops for adaptive_ball_query_idx")
         return
 
     torch.manual_seed(11)
@@ -98,7 +98,11 @@ def check_cuda_query():
     offset = torch.tensor([64, 128], dtype=torch.int32, device="cuda")
     radius = torch.linspace(0.16, 0.32, points.shape[0], device="cuda")
     idx, dist = pointops.adaptive_ball_query(16, 0.0, radius, points, offset)
+    idx_only = pointops.adaptive_ball_query_idx(16, 0.0, radius, points, offset)
     torch.cuda.synchronize()
+    if not torch.equal(idx, idx_only):
+        mismatch = (idx != idx_only).sum().item()
+        raise AssertionError(f"indices-only output differs at {mismatch} entries")
     valid_idx = idx >= 0
     max_over = ((dist > radius.view(-1, 1) + 1e-4) & valid_idx).sum().item()
     shadow_ratio = (~valid_idx).float().mean().item()
@@ -131,10 +135,21 @@ def check_cuda_query():
     end_event = torch.cuda.Event(enable_timing=True)
     start_event.record()
     for _ in range(repeats):
-        pointops.adaptive_ball_query(16, 0.0, bench_radius, bench_points, bench_offset)
+        pointops.adaptive_ball_query_idx(
+            16, 0.0, bench_radius, bench_points, bench_offset
+        )
     end_event.record()
     torch.cuda.synchronize()
-    adaptive_ms = start_event.elapsed_time(end_event) / repeats
+    adaptive_idx_ms = start_event.elapsed_time(end_event) / repeats
+
+    start_event.record()
+    for _ in range(repeats):
+        pointops.adaptive_ball_query(
+            16, 0.0, bench_radius, bench_points, bench_offset
+        )
+    end_event.record()
+    torch.cuda.synchronize()
+    adaptive_legacy_ms = start_event.elapsed_time(end_event) / repeats
 
     start_event.record()
     for _ in range(repeats):
@@ -147,10 +162,12 @@ def check_cuda_query():
     print(f"  idx_shape={tuple(idx.shape)}")
     print(f"  max_distance={dist.max().item():.4f}")
     print(f"  outside_count={max_over}")
+    print("  indices_only_equal_legacy=True")
     print(f"  shadow_ratio={shadow_ratio:.4f}")
     print(f"  brute_count_mean={brute_counts.mean().item():.2f}")
     print(f"  cuda_unique_count_mean={cuda_unique_counts.mean().item():.2f}")
-    print(f"  adaptive_ball_query_ms={adaptive_ms:.3f}")
+    print(f"  adaptive_ball_query_idx_ms={adaptive_idx_ms:.3f}")
+    print(f"  adaptive_ball_query_legacy_ms={adaptive_legacy_ms:.3f}")
     print(f"  knn_query_ms={knn_ms:.3f}")
 
 

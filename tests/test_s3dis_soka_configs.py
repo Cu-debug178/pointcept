@@ -5,6 +5,10 @@ import runpy
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = ROOT / "configs" / "s3dis"
 BASELINE_CONFIG = CONFIG_DIR / "semseg-kpconvx-base-s3dis-scale04-4090d-area5.py"
+ALIGNED_BASELINE_CONFIG = (
+    CONFIG_DIR
+    / "semseg-kpconvx-base-s3dis-scale04-136k-linear-sharekp-4090d-area5.py"
+)
 LITE_CONFIG = CONFIG_DIR / "semseg-kpconvx-soka-lite-scale04-4090d-area5.py"
 LITE_STAGE4_CONFIG = (
     CONFIG_DIR / "semseg-kpconvx-soka-lite-stage4-scale04-4090d-area5.py"
@@ -12,6 +16,14 @@ LITE_STAGE4_CONFIG = (
 FUSION_CONFIG = CONFIG_DIR / "semseg-kpconvx-soka-fusion-scale04-4090d-area5.py"
 FUSION_STAGE4_CONFIG = (
     CONFIG_DIR / "semseg-kpconvx-soka-fusion-stage4-scale04-4090d-area5.py"
+)
+FUSION_136K_CONFIG = (
+    CONFIG_DIR
+    / "semseg-kpconvx-soka-fusion-scale04-136k-linear-sharekp-4090d-area5.py"
+)
+FUSION_136K_STAGE4_CONFIG = (
+    CONFIG_DIR
+    / "semseg-kpconvx-soka-fusion-stage4-scale04-136k-linear-sharekp-4090d-area5.py"
 )
 COMMON_SOKA_KEYS = {
     "soka_enabled",
@@ -103,10 +115,10 @@ def test_lite_formal_config_keeps_all_original_attention_stages():
     assert backbone["soka_monitor"] is True
 
 
-def test_fusion_formal_config_uses_deep_stages_and_all_evidence_branches():
+def test_fusion_formal_config_uses_all_eligible_stages_and_evidence_branches():
     backbone = _load_config(FUSION_CONFIG)["model"]["backbone"]
     assert backbone["soka_enabled"] is True
-    assert backbone["soka_stages"] == (4, 5)
+    assert backbone["soka_stages"] == (2, 3, 4, 5)
     assert backbone["soka_evidence_dim"] == 16
     assert backbone["soka_rank"] == 8
     assert backbone["soka_bias_bound"] == 2.0
@@ -114,6 +126,29 @@ def test_fusion_formal_config_uses_deep_stages_and_all_evidence_branches():
     assert backbone["soka_use_topology"] is True
     assert backbone["soka_use_query"] is True
     assert backbone["soka_monitor"] is True
+
+
+def test_136k_fusion_config_preserves_the_selected_strong_baseline():
+    baseline = _load_config(ALIGNED_BASELINE_CONFIG)
+    fusion = _load_config(FUSION_136K_CONFIG)
+
+    assert fusion["model"]["backbone"]["type"] == "kpconvx_soka"
+    _assert_training_contract_is_preserved(fusion, baseline, FUSION_KEYS)
+    assert fusion["epoch"] == 2000
+    assert fusion["eval_epoch"] == 400
+    assert fusion["model"]["backbone"]["kp_influence"] == "linear"
+    assert fusion["model"]["backbone"]["share_kp"] is True
+
+
+def test_136k_stage4_probe_changes_only_the_selected_stage():
+    formal = _load_config(FUSION_136K_CONFIG)
+    stage4 = _load_config(FUSION_136K_STAGE4_CONFIG)
+    formal_backbone = dict(formal["model"]["backbone"])
+    stage4_backbone = dict(stage4["model"]["backbone"])
+    assert stage4_backbone.pop("soka_stages") == (4,)
+    formal_backbone.pop("soka_stages")
+    assert stage4_backbone == formal_backbone
+    assert stage4["data"] == formal["data"]
 
 
 def test_stage4_probes_change_only_stage_selection():

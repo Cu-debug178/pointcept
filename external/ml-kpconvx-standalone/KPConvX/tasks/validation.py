@@ -136,7 +136,7 @@ def cloud_segmentation_validation(epoch, net, val_loader, cfg, val_data, device,
         t += [time.time()]
 
         if 'cuda' in device.type:
-            batch.to(device)
+            batch.to(device, non_blocking=True)
 
         # Update effective batch size
         mean_f = max(0.02, 1.0 / (step + 1))
@@ -437,7 +437,7 @@ def object_classification_validation(epoch, net, val_loader, cfg, val_data, devi
         t += [time.time()]
 
         if 'cuda' in device.type:
-            batch.to(device)
+            batch.to(device, non_blocking=True)
 
         # Update effective batch size
         mean_f = max(0.02, 1.0 / (step + 1))

@@ -25,7 +25,13 @@ import sys
 import time
 import signal
 import argparse
+import random
 import numpy as np
+
+# Keep allocator behavior configurable without overriding a user's process-wide
+# choice. This must run before importing torch.
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -65,6 +71,23 @@ from tasks.trainval import train_and_validate
 #           Config Class
 #       \******************/
 #
+
+
+def seed_worker(worker_id):
+    """Seed Python/NumPy/Torch in each DataLoader worker from its torch seed."""
+    worker_seed = torch.initial_seed() % (2 ** 32)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def seed_everything(seed):
+    """Set the explicit experiment seed used by the Standalone pipeline."""
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def my_config():
@@ -444,6 +467,10 @@ if __name__ == '__main__':
                 'model.init_channels',
                 'model.first_inv_layer',
                 'train.cyc_decrease10',
+                'train.num_workers',
+                'train.steps_per_epoch',
+                'train.batch_size',
+                'train.accum_batch',
                 'model.da_radius_density_k',
                 'model.da_radius_debug_interval',
                 'model.dual_support_density_k',
@@ -499,6 +526,7 @@ if __name__ == '__main__':
     # Log path special arg
     parser.add_argument('--dataset_path', type=str)
     parser.add_argument('--log_path', type=str)
+    parser.add_argument('--seed', type=int)
     args = parser.parse_args()
 
     # Configuration parameters
@@ -515,6 +543,12 @@ if __name__ == '__main__':
         get_directories(cfg, log_path=args.log_path)
     else:
         get_directories(cfg)
+
+    # The legacy Standalone recipe defaults to seed 42. New launchers pass an
+    # explicit seed so this experiment matches the aligned Standalone run.
+    if args.seed is not None:
+        cfg.exp.seed = args.seed
+        seed_everything(cfg.exp.seed)
 
     # Update parameters
     for all_args in [str_args, float_args, int_args, list_args, bool_args]:
@@ -570,20 +604,41 @@ if __name__ == '__main__':
     test_sampler = SceneSegSampler(test_dataset)
 
     # Initialize the dataloader
-    training_loader = DataLoader(training_dataset,
-                                 batch_size=1,
-                                 sampler=training_sampler,
-                                 collate_fn=SceneSegCollate,
-                                 num_workers=cfg.train.num_workers,
-                                 persistent_workers=False,
-                                 pin_memory=False)
-    test_loader = DataLoader(test_dataset,
-                             batch_size=1,
-                             sampler=test_sampler,
-                             collate_fn=SceneSegCollate,
-                             num_workers=cfg.test.num_workers,
-                             persistent_workers=False,
-                             pin_memory=False)
+    loader_seed = None
+    worker_init = None
+    if args.seed is not None:
+        loader_seed = torch.Generator()
+        loader_seed.manual_seed(int(cfg.exp.seed))
+        worker_init = seed_worker
+    train_loader_kwargs = dict(
+        batch_size=1,
+        sampler=training_sampler,
+        collate_fn=SceneSegCollate,
+        num_workers=cfg.train.num_workers,
+        persistent_workers=False,
+        pin_memory=True,
+        worker_init_fn=worker_init,
+        generator=loader_seed,
+    )
+    if cfg.train.num_workers > 0:
+        train_loader_kwargs['prefetch_factor'] = 4
+    training_loader = DataLoader(training_dataset, **train_loader_kwargs)
+
+    test_loader_kwargs = dict(
+        batch_size=1,
+        sampler=test_sampler,
+        collate_fn=SceneSegCollate,
+        num_workers=cfg.test.num_workers,
+        persistent_workers=False,
+        pin_memory=True,
+        worker_init_fn=worker_init,
+    )
+    if args.seed is not None:
+        test_loader_kwargs['generator'] = torch.Generator()
+        test_loader_kwargs['generator'].manual_seed(int(cfg.exp.seed) + 1)
+    if cfg.test.num_workers > 0:
+        test_loader_kwargs['prefetch_factor'] = 2
+    test_loader = DataLoader(test_dataset, **test_loader_kwargs)
 
 
     ###############

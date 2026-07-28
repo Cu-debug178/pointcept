@@ -16,6 +16,22 @@ candidate_slot >= base_H
 This makes the supports disjoint and prevents the ring branch from processing
 the baseline neighbors twice.
 
+## Integration safety fixes
+
+The initial V18 snapshot had two model-level integration errors that were not
+covered by the graph utility tests:
+
+- slicing `H` neighbors from a larger candidate tensor produced a non-contiguous
+  view, which failed in the official `index_select(... indices.view(-1))` path;
+- ring modules used the stage input width even though `grid_pool=True` makes the
+  final encoder block project to the next stage width before the ring is called.
+
+The identity neighbor slices are now made contiguous locally, and ring channels
+are derived from the actual post-encoder width. For the S3DIS profile, stage 3
+and stage 4 use 192 and 256 channels. A model-level CPU regression test verifies
+the complete synthetic forward and exact `gamma=0` equality with official
+KPNeXt. Real S3DIS CUDA identity equivalence is still required before training.
+
 ## Diagnostic profile
 
 Standalone stages are one-based. Stages `[3, 4]` correspond to the Pro

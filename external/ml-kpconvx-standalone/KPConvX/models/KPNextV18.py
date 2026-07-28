@@ -217,10 +217,18 @@ class KPNeXtV18(KPNeXt):
         )
 
         channel_scaling = float(model_cfg.channel_scaling)
-        stage_channels = []
+        layer_channels = []
         for layer in range(self.num_layers):
             target = float(model_cfg.init_channels) * channel_scaling ** layer
-            stage_channels.append(int(np.ceil((target - 0.1) / 16)) * 16)
+            layer_channels.append(int(np.ceil((target - 0.1) / 16)) * 16)
+        # The ring is inserted after all encoder blocks. With grid pooling,
+        # each non-final stage has already projected to the next stage width.
+        stage_channels = [
+            layer_channels[layer + 1]
+            if self.grid_pool and layer < self.num_layers - 1
+            else layer_channels[layer]
+            for layer in range(self.num_layers)
+        ]
 
         self.ring_modules = nn.ModuleDict()
         for stage in self.dual_support_stages:
@@ -307,7 +315,16 @@ class KPNeXtV18(KPNeXt):
             base_limit=base_limit,
             ring_limit=self.dual_support_ring_limits[stage],
         )
-        features = features + self.ring_modules[str(stage)](
+        ring_module = self.ring_modules[str(stage)]
+        if features.shape[1] != ring_module.channels:
+            raise RuntimeError(
+                "Stage {} ring channel mismatch: feature C={}, module C={}".format(
+                    stage,
+                    features.shape[1],
+                    ring_module.channels,
+                )
+            )
+        features = features + ring_module(
             points,
             points,
             features,
@@ -367,7 +384,7 @@ class KPNeXtV18(KPNeXt):
         self._ensure_pyramid(batch.in_dict)
         features = batch.in_dict.features.clone().detach()
         base_neighbors = [
-            neighbors[:, : self.base_neighbor_limits[layer]]
+            neighbors[:, : self.base_neighbor_limits[layer]].contiguous()
             for layer, neighbors in enumerate(batch.in_dict.neighbors)
         ]
 

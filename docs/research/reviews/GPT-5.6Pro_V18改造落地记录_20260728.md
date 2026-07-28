@@ -43,6 +43,15 @@
 - V13/V18 纯图算法测试共 7 项通过；
 - 新增 Python 文件通过 `py_compile`；
 - 在仅屏蔽未编译 C++ 扩展导入的构造 smoke 中，`KPNeXtV18` 成功实例化；
-- ring modules 参数量为 stage 3 `201,152`、stage 4 `446,112`，合计
-  `647,264`；
+- 初版曾按错误的 stage 输入通道记录 ring 参数量为 `647,264`；P0 修复后
+  已按实际 post-encoder 通道重新验证：stage 3 `446,112`、stage 4
+  `787,328`，合计 `1,233,440`；
 - 尚未在真实 S3DIS batch 上完成 CUDA 前向、显存和吞吐验证。
+
+## P0 集成修正
+
+后续模型级审查确定初版存在两个真实 forward 阻断：候选邻居切片不连续，
+以及 `grid_pool=True` 时 ring module 通道仍按 stage 输入宽度构造。修复及
+验证记录见：
+
+`KPConvX_Standalone_V18_P0修复落地记录_20260728.md`
